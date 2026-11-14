@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Golchin"
+    given-names: "Omid"
+title: "GPU Budget Planner: reserve, on demand, spot, or a mix?"
+version: "1.0.0"
+date-released: 2026-11-14
+license: MIT

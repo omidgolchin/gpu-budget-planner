@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Internal review notes and release binaries travel outside git
+# (binaries reach GitHub through the release leftover package).
+REPORT_FOR_REVIEW.md
+docs/hero.gif
+docs/screenshots/

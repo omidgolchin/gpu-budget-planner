@@ -1,0 +1,358 @@
+/* GPU Budget Planner: page logic. Engine in gpuplan.js, price data in
+ * data/prices.js (window.GPU_PRICES), shared helpers in tool-common.js. */
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var F = Tool.fmt;
+  var DATA = window.GPU_PRICES || null;
+  var DEFAULTS = {
+    gpu: "h100", hours: 2000, weeks: 6, budget: 9000, ckpt: "2", term: "12",
+    onDemand: "", reserved: "", cap: "", block: "28", paths: "400"
+  };
+  var EXAMPLES = [
+    { label: "Ablation runs: 2,000 H100-hours in 6 weeks", v: { gpu: "h100", hours: 2000, weeks: 6, budget: 9000, ckpt: "2", term: "12" } },
+    { label: "Workshop deadline: 5,000 A100-hours in 2 weeks", v: { gpu: "a100", hours: 5000, weeks: 2, budget: "", ckpt: "4", term: "12" } },
+    { label: "Tight budget: 4,000 H100-hours, $10,000", v: { gpu: "h100", hours: 4000, weeks: 8, budget: 10000, ckpt: "2", term: "12" } },
+    { label: "Patient V100 retrain: 800 hours, 12 weeks", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "12" } },
+    { label: "V100 on a 2-year reservation quote", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "24" } },
+    { label: "Big pretrain: 8,000 H100-hours, 12 weeks", v: { gpu: "h100", hours: 8000, weeks: 12, budget: 30000, ckpt: "4", term: "12" } }
+  ];
+  var IDS = ["gpu", "hours", "weeks", "budget", "ckpt", "term", "onDemand", "reserved", "cap", "block", "paths"];
+  var TITLES = {
+    reserved: "Reserve everything now",
+    ondemand: "Pay on demand for everything",
+    spot: "Run it all on spot",
+    spotfb: "Run it all on spot, with an on-demand fallback in the last week",
+    mix25: "Reserve 25% now, run the rest on spot",
+    mix50: "Reserve 50% now, run the rest on spot",
+    mix60: "Reserve 60% now, run the rest on spot",
+    mix75: "Reserve 75% now, run the rest on spot"
+  };
+  var state = Tool.readParams(DEFAULTS);
+  var last = null;
+
+  function setInputs(v) { Object.keys(v).forEach(function (k) { var e = $(k); if (e) e.value = v[k] === null ? "" : v[k]; }); }
+  function num(id) { var v = $(id).value; return v === "" ? null : Number(v); }
+  function price(v) { return "$" + Number(v).toFixed(2); }
+  function shortMoney(v) { return v >= 1000 ? "$" + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + "k" : "$" + Math.round(v); }
+  function debounce(fn, ms) { var t; return function () { clearTimeout(t); t = setTimeout(fn, ms); }; }
+  function fieldError(id, msg) {
+    var f = $(id).closest(".field"); if (!f) return; var e = f.querySelector(".err");
+    f.classList.toggle("invalid", !!msg);
+    if (msg) { if (!e) { e = document.createElement("div"); e.className = "err"; f.appendChild(e); } e.textContent = msg; }
+    else if (e) e.remove();
+  }
+  function gpuData() { return DATA.gpus[$("gpu").value] || DATA.gpus.h100; }
+  function updateGpuHint() {
+    if (!DATA) return;
+    var g = gpuData();
+    $("gpuHint").textContent = "Spot history: AWS " + g.instance + " (" + g.gpusPerInstance + " × " + g.label + " per instance), us-east-1, May to November 2024.";
+  }
+  function reservedPrefill(g, term) {
+    if (g.reservedByTerm[term] != null) return g.reservedByTerm[term];
+    var terms = Object.keys(g.reservedByTerm).map(Number).sort(function (a, b) { return a - b; });
+    var best = terms[0]; terms.forEach(function (t) { if (Math.abs(t - term) < Math.abs(best - term)) best = t; });
+    return g.reservedByTerm[best];
+  }
+  function fillPrices(force) {
+    if (!DATA) return;
+    var g = gpuData();
+    if (force || $("onDemand").value === "") $("onDemand").value = g.onDemand;
+    if (force || $("reserved").value === "") $("reserved").value = reservedPrefill(g, Number($("term").value));
+  }
+  function fmtDate(iso) {
+    var M = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    var p = iso.split("-"); return M[Number(p[1]) - 1] + " " + Number(p[2]) + ", " + p[0];
+  }
+
+  setInputs(state);
+  if (DATA) {
+    fillPrices(false);
+    updateGpuHint();
+    $("odHint").textContent = "Prefilled from GetDeploying's weekly medians (week of " + fmtDate(DATA.gdWeek) + "). Edit if your quote differs.";
+    $("resHint").textContent = "Prefilled: median listing for the term above, same week. Changing the GPU or term refills both prices.";
+    $("gdWeek").textContent = fmtDate(DATA.gdWeek);
+  }
+  EXAMPLES.forEach(function (ex, i) { var o = document.createElement("option"); o.value = i; o.textContent = ex.label; $("example").appendChild(o); });
+  $("example").addEventListener("change", function () {
+    if (this.value === "") return;
+    var v = EXAMPLES[+this.value].v; this.value = "";
+    document.querySelectorAll(".field.filled").forEach(function (f) { f.classList.remove("filled"); });
+    $("gpu").value = v.gpu; $("term").value = v.term; fillPrices(true);
+    $("hours").value = v.hours; $("weeks").value = v.weeks; $("budget").value = v.budget; $("ckpt").value = v.ckpt;
+    run();
+  });
+  IDS.forEach(function (id) {
+    $(id).addEventListener("input", debounce(run, 250));
+    $(id).addEventListener("change", function () {
+      if (id === "gpu") { fillPrices(true); updateGpuHint(); }
+      if (id === "term") fillPrices(true);
+      run();
+    });
+  });
+  window.addEventListener("resize", debounce(function () { if (last) drawCharts(); }, 200));
+  if (window.KitTheme) KitTheme.onChange(function () { setTimeout(function () { if (last) drawCharts(); }, 0); });
+
+  /* ---------- AI assist ---------- */
+  if (window.ASSIST_CONFIG) Tool.assist(Object.assign({}, window.ASSIST_CONFIG, {
+    mount: $("assistMount"), toggle: $("assistToggle"),
+    apply: function (vals) {
+      document.querySelectorAll(".field.filled").forEach(function (f) { f.classList.remove("filled"); });
+      function mark(id, v) { if (v === undefined || v === null) return; $(id).value = v; var f = $(id).closest(".field"); if (f) f.classList.add("filled"); }
+      function snap(v, opts) { var b = opts[0]; opts.forEach(function (o) { if (Math.abs(o - v) < Math.abs(b - v)) b = o; }); return b; }
+      if (vals.gpu) {
+        var m = /h100|a100|v100/i.exec(String(vals.gpu));
+        if (m) { $("gpu").value = m[0].toLowerCase(); fillPrices(true); mark("gpu", $("gpu").value); }
+      }
+      if (vals.termMonths != null) { $("term").value = snap(Number(vals.termMonths), [1, 3, 6, 12, 24, 36]); fillPrices(true); mark("term", $("term").value); }
+      mark("hours", vals.hours); mark("weeks", vals.weeks); mark("budget", vals.budget);
+      if (vals.ckptHours != null) mark("ckpt", snap(Number(vals.ckptHours), [0.5, 1, 2, 4, 8, 24, 168]));
+      mark("onDemand", vals.onDemand); mark("reserved", vals.reserved);
+      run();
+    }
+  }));
+
+  /* ---------- the plan ---------- */
+  function readInputs() {
+    var v = {
+      gpu: $("gpu").value, hours: num("hours"), weeks: num("weeks"), budget: num("budget"),
+      ckpt: Number($("ckpt").value), term: Number($("term").value),
+      onDemand: num("onDemand"), reserved: num("reserved"), cap: num("cap"),
+      block: Number($("block").value), paths: Number($("paths").value)
+    };
+    var ok = true;
+    function need(id, cond, msg) { fieldError(id, cond ? "" : msg); if (!cond) ok = false; }
+    need("hours", v.hours > 0 && v.hours <= 1000000, "Between 1 and 1,000,000 GPU-hours.");
+    need("weeks", v.weeks >= 1 && v.weeks <= 52 && Math.floor(v.weeks) === v.weeks, "A whole number of weeks, 1 to 52.");
+    need("budget", v.budget === null || v.budget > 0, "Above 0, or empty for no limit.");
+    need("onDemand", v.onDemand === null || (v.onDemand > 0 && v.onDemand <= 1000), "Above 0, or empty to use the prefill.");
+    need("reserved", v.reserved === null || (v.reserved > 0 && v.reserved <= 1000), "Above 0, or empty to use the prefill.");
+    need("cap", v.cap === null || v.cap > 0, "Above 0, or empty for the on-demand price.");
+    return ok ? v : null;
+  }
+
+  function run() {
+    if (DATA) { fillPrices(false); updateGpuHint(); }
+    var urlState = {}; IDS.forEach(function (k) { urlState[k] = $(k).value; }); Tool.writeParams(urlState);
+    if (!DATA) { $("vTitle").textContent = "Price data did not load."; return; }
+    var v = readInputs();
+    if (!v) {
+      $("vTitle").textContent = "Check the highlighted inputs"; $("vBody").textContent = "";
+      $("kpis").innerHTML = ""; $("checks").innerHTML = "";
+      $("verdict").className = "panel verdict v-neutral";
+      $("boxChart").innerHTML = ""; $("boxCaption").textContent = ""; last = null; return;
+    }
+    var g = gpuData();
+    var pOd = num("onDemand"), pRes = num("reserved");
+    var cap = v.cap === null ? pOd : v.cap;
+    var out = GpuPlan.plan(g.spot, v.hours, v.weeks, v.budget, v.ckpt, pRes, pOd,
+      { cap: cap, paths: v.paths, block: v.block, seed: 42 });
+    var out1 = null;
+    if (v.ckpt !== 1) out1 = GpuPlan.plan(g.spot, v.hours, v.weeks, v.budget, 1, pRes, pOd,
+      { cap: cap, paths: v.paths, block: v.block, seed: 42 });
+    last = { v: v, g: g, out: out, out1: out1, pOd: pOd, pRes: pRes, cap: cap };
+    render();
+  }
+
+  function byId(out) { var m = {}; out.strategies.forEach(function (s) { m[s.id] = s; }); return m; }
+  function stratName(out, id) { return out.strategies.filter(function (s) { return s.id === id; })[0].name; }
+
+  function render() {
+    var v = last.v, out = last.out, S = byId(out), rec = out.recommendation, W = S[rec.id];
+    var spot = S.spot, res = S.reserved, od = S.ondemand;
+    var title, body;
+    if (rec.reason === "budget-infeasible") {
+      title = "That budget cannot be met";
+      body = "The cheapest plan that always finishes on time is " + stratName(out, rec.id).toLowerCase() +
+        " at a fixed " + F.money(W.median) + ", already over your " + F.money(v.budget) + " budget. " +
+        "Spot plans can come in under it (all-spot's median is " + F.money(spot.median) + "), but they are gambles, not plans. " +
+        "Raise the budget to about " + F.money(W.median) + ", or cut the GPU-hours.";
+    } else {
+      title = TITLES[rec.id];
+      body = "Median bill " + F.money(W.median) + "; the middle 90% of simulated bills run " +
+        F.money(W.p5) + " to " + F.money(W.p95) + ".";
+      if (v.budget !== null) body += " Chance of going over your " + F.money(v.budget) + " budget: " + F.pct(W.pOver, 0) + ".";
+      if (rec.id === "spot" || rec.id === "spotfb") {
+        body += " Reserving everything would cost " + F.money(res.median) + " for certain, " +
+          F.money(res.median - W.median) + " more than this plan's median.";
+      } else if (rec.id === "reserved" || rec.id === "ondemand") {
+        body += " All-spot's median is " + F.money(spot.median) + ", only " +
+          F.money(Math.abs(spot.median - W.median)) + (spot.median < W.median ? " less" : " more") +
+          ", and it finishes late in " + F.pct(spot.pMiss, 0) + " of runs. The sure thing wins.";
+      } else {
+        body += " All-spot's median is " + F.money(spot.median) + " but it finishes late in " + F.pct(spot.pMiss, 0) +
+          " of runs; reserving everything costs " + F.money(res.median) + " for certain.";
+      }
+      if (W.pMiss > 0) body += " This plan itself finishes late in " + F.pct(W.pMiss, 0) + " of runs.";
+    }
+    $("vTitle").textContent = title; $("vBody").textContent = body;
+    $("verdict").className = "panel verdict " + rec.cls;
+    last.title = title; last.body = body;
+
+    var k = [[F.money(W.median), "median bill"], [F.money(W.es95), "average of the worst 5% of bills"]];
+    if (v.budget !== null) k.push([F.pct(W.pOver, 0), "chance over budget"]);
+    else k.push([W.interruptions ? W.interruptions.toFixed(1) : "0", "spot interruptions per run"]);
+    k.push([F.pct(W.pMiss, 0), "chance of finishing late"]);
+    $("kpis").innerHTML = k.map(function (x) { return '<div class="kpi"><span class="k-val">' + x[0] + '</span><span class="k-lbl">' + x[1] + "</span></div>"; }).join("");
+
+    var c = [];
+    /* Deadline risk: a plan no pricier than the winner that is often late. */
+    var traps = out.strategies.filter(function (s) { return s.id !== rec.id && s.median <= W.median * 1.005 && s.pMiss > 0.05; });
+    if (traps.length) {
+      var t0 = traps.reduce(function (a, b) { return a.median < b.median ? a : b; });
+      c.push(["fail", "LATE RISK", "Deadline", t0.name + " matches or beats the recommended plan's median (" + F.money(t0.median) +
+        ") but finishes late in " + F.pct(t0.pMiss, 0) + " of simulated runs. The recommendation is buying the deadline, not a lower median."]);
+    } else if (W.pMiss > 0.02) {
+      c.push(["warn", "DEADLINE", "Deadline", "The recommended plan itself finishes late in " + F.pct(W.pMiss, 0) +
+        " of runs. If the deadline is hard, add the on-demand fallback or reserve more."]);
+    } else {
+      c.push(["ok", "ON TIME", "Deadline", "No plan at or below the recommended plan's median finishes late in more than 5% of runs; no cheap-but-late trap here."]);
+    }
+    /* Tail risk: expected shortfall beside the percentile. */
+    var tailTxt = "The 95th percentile bill for the recommended plan is " + F.money(W.p95) +
+      "; the average of the worst 5% of bills (the expected shortfall, Acerbi & Tasche 2002) is " + F.money(W.es95) +
+      ", " + F.pct((W.es95 - W.p95) / W.p95, 1) + " higher. Budget against the shortfall, not the percentile.";
+    c.push([v.budget !== null && W.es95 > v.budget ? "warn" : "info", "TAIL RISK", "Expected shortfall", tailTxt]);
+    /* Budget. */
+    if (rec.reason === "budget-infeasible") {
+      c.push(["fail", "OVER BUDGET", "Budget", "No fixed-price plan fits " + F.money(v.budget) +
+        ": all reserved costs " + F.money(res.median) + " and all on-demand " + F.money(od.median) + ", whatever the spot price does."]);
+    } else if (v.budget !== null) {
+      c.push([W.pOver <= 0.05 ? "ok" : W.pOver <= 0.2 ? "info" : "warn", "BUDGET", "Budget",
+        "The recommended plan goes over " + F.money(v.budget) + " in " + F.pct(W.pOver, 0) + " of simulated runs."]);
+    }
+    /* Checkpoints, against the hourly-checkpoint counterfactual. */
+    if (last.out1) {
+      var W1 = byId(last.out1)[last.out1.recommendation.id], spotNow = spot, spot1 = byId(last.out1).spot;
+      if (last.out1.recommendation.id !== rec.id) {
+        c.push(["warn", "CHECKPOINTS", "Checkpoint interval", "With hourly checkpoints the winner would be " +
+          stratName(last.out1, last.out1.recommendation.id).toLowerCase() + " (median " + F.money(W1.median) +
+          "). At your setting, redone work changes the answer. Checkpoint more often if you can."]);
+      } else if (Math.abs(spot1.median - spotNow.median) > 0.02 * spotNow.median) {
+        c.push(["info", "CHECKPOINTS", "Checkpoint interval", "Hourly checkpoints would put the all-spot median at " +
+          F.money(spot1.median) + " instead of " + F.money(spotNow.median) + ": at " + v.ckpt +
+          " hours between checkpoints, interruptions cost about " + F.int(spotNow.lostHours) + " redone GPU-hours per run."]);
+      } else {
+        c.push(["ok", "CHECKPOINTS", "Checkpoint interval", "Interruptions are rare at these prices, so the interval changes little here. It bites when spot prices hover near your cap."]);
+      }
+    }
+    /* Forecast coverage for this GPU's series. */
+    var cov = last.g.coverage, covPct = cov.pct;
+    if (covPct >= 0.78 && covPct <= 0.97) {
+      c.push(["ok", "CHECKED", "Forecast intervals", "Backtest on the held-out months (" + cov.months.join(", ") +
+        "): the simulated 90% price band contained the real price on " + F.pct(covPct, 0) + " of " + cov.days + " days. The ranges above are honest for this GPU."]);
+    } else {
+      c.push(["warn", "CHECK", "Forecast intervals", "Backtest on the held-out months (" + cov.months.join(", ") +
+        "): the simulated 90% price band contained the real price on only " + F.pct(covPct, 0) + " of " + cov.days +
+        " days. Prices trended out of the band, so treat the ranges above as optimistic for this GPU."]);
+    }
+    $("checks").innerHTML = c.map(function (x) { return '<div class="check is-' + x[0] + '"><span class="badge">' + x[1] + '</span><div><span class="c-name">' + x[2] + '.</span> <span class="c-text">' + x[3] + "</span></div></div>"; }).join("");
+    last.checks = c;
+    drawCharts();
+    drawTable();
+  }
+
+  /* ---------- charts and table ---------- */
+  function cssVar(name, fallback) {
+    var val = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return val || fallback;
+  }
+  function drawCharts() { drawBox(); drawFan(); }
+  function drawBox() {
+    var host = $("boxChart"); if (!last) { host.innerHTML = ""; return; }
+    var out = last.out, W = Math.max(280, host.clientWidth || 600);
+    var NS = "http://www.w3.org/2000/svg";
+    function el(name, attrs, parent) { var e = document.createElementNS(NS, name); Object.keys(attrs || {}).forEach(function (k2) { e.setAttribute(k2, attrs[k2]); }); if (parent) parent.appendChild(e); return e; }
+    var narrow = W < 480, labelW = narrow ? 92 : 132, right = 58, plotW = W - labelW - right;
+    var top = 24, rowH = 36, H = top + out.strategies.length * rowH + 6;
+    var xMax = 0;
+    out.strategies.forEach(function (s) { xMax = Math.max(xMax, s.es95); });
+    if (last.v.budget !== null) xMax = Math.max(xMax, last.v.budget);
+    xMax *= 1.03;
+    var X = function (x) { return labelW + (x / xMax) * plotW; };
+    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Cost distribution per plan" }, host);
+    host.innerHTML = ""; host.appendChild(svg);
+    var ticks = Tool.niceTicks(0, xMax, narrow ? 3 : 5);
+    ticks.forEach(function (t) {
+      el("line", { x1: X(t), x2: X(t), y1: top - 6, y2: H - 4, stroke: cssVar("--grid", "#ddd"), "stroke-width": 1 }, svg);
+      var tx = el("text", { x: X(t), y: 12, "text-anchor": "middle", class: "boxaxis" }, svg); tx.textContent = shortMoney(t);
+    });
+    if (last.v.budget !== null) {
+      el("line", { x1: X(last.v.budget), x2: X(last.v.budget), y1: top - 6, y2: H - 4, stroke: cssVar("--bad", "#b3261e"), "stroke-width": 1.4, "stroke-dasharray": "5 4" }, svg);
+      var bt = el("text", { x: X(last.v.budget), y: top - 10, "text-anchor": "middle", class: "boxaxis" }, svg); bt.textContent = "budget";
+    }
+    out.strategies.forEach(function (s, i) {
+      var y = top + i * rowH + rowH / 2, win = s.id === out.recommendation.id;
+      var lab = el("text", { x: 0, y: y + 4, class: "boxrow-label" + (win ? " win" : "") }, svg);
+      lab.textContent = narrow ? s.short : s.name.replace(", on-demand fallback in the last week", " + fallback");
+      el("line", { x1: X(s.p5), x2: X(s.p95), y1: y, y2: y, stroke: cssVar("--neutral", "#888"), "stroke-width": 2 }, svg);
+      el("line", { x1: X(s.p5), x2: X(s.p5), y1: y - 6, y2: y + 6, stroke: cssVar("--neutral", "#888"), "stroke-width": 2 }, svg);
+      el("line", { x1: X(s.p95), x2: X(s.p95), y1: y - 6, y2: y + 6, stroke: cssVar("--neutral", "#888"), "stroke-width": 2 }, svg);
+      el("rect", { x: X(s.p25), y: y - 7, width: Math.max(2, X(s.p75) - X(s.p25)), height: 14, fill: win ? cssVar("--accent", "#0b5fa5") : cssVar("--neutral", "#888"), opacity: win ? 1 : 0.5, rx: 2 }, svg);
+      el("line", { x1: X(s.median), x2: X(s.median), y1: y - 8, y2: y + 8, stroke: cssVar("--card", "#fff"), "stroke-width": 2 }, svg);
+      var d = el("path", { d: "M" + X(s.es95) + " " + (y - 6) + " L" + (X(s.es95) + 6) + " " + y + " L" + X(s.es95) + " " + (y + 6) + " L" + (X(s.es95) - 6) + " " + y + " Z", fill: cssVar("--series-2", "#b26a00") }, svg);
+      if (s.pMiss > 0.05) {
+        var lt = el("text", { x: X(s.p95) + 10, y: y + 4, class: "boxlate" }, svg);
+        lt.textContent = "late " + F.pct(s.pMiss, 0);
+      }
+    });
+    $("boxCaption").textContent = "Each row: the middle 50% of simulated bills (box), the median (white line), the 5th to 95th percentile (whiskers), and the expected shortfall (diamond). " +
+      "All plans are scored on the same " + last.v.paths + " simulated price paths. Rows marked late miss the deadline in more than 5% of runs.";
+  }
+  function drawFan() {
+    var host = $("fanChart"); if (!last) { host.innerHTML = ""; return; }
+    var g = last.g, out = last.out, spot = g.spot, n = spot.length, days = out.days;
+    var hist = [];
+    for (var i = Math.max(0, n - 60); i < n; i++) hist.push([i - (n - 1), spot[i]]);
+    var med = [], lo = [], hi = [];
+    for (var t = 0; t < days; t++) { med.push([t, out.fan.p50[t]]); lo.push([t, out.fan.p5[t]]); hi.push([t, out.fan.p95[t]]); }
+    Tool.lineChart(host, {
+      series: [
+        { label: "Spot price, recent history", color: "neutral", points: hist },
+        { label: "Simulated median", color: "accent", points: med },
+        { label: "Middle 90% of paths", color: "neutral", points: hi, dash: "5 4" },
+        { label: "", color: "neutral", points: lo, dash: "5 4" }
+      ],
+      legend: true, height: 260,
+      hLines: [{ y: last.cap, label: "your cap " + price(last.cap), color: "series2", labelLeft: true }],
+      xTitle: "days from today", yTitle: "$ per GPU-hour",
+      xFormat: function (x) { return x === 0 ? "today" : (x < 0 ? x + "d" : "+" + x + "d"); },
+      yFormat: function (y) { return "$" + y.toFixed(2); }
+    });
+    $("fanCaption").textContent = "Left of today: the last 60 days of the " + g.label + " spot series the simulation resamples (AWS us-east-1 changes, level set to today's market). Right: the simulated band for your deadline. Paths start at " +
+      price(GpuPlan.startPrice(spot)) + ", the median of the last 30 observed days.";
+    var cov = g.coverage;
+    $("coverageNote").textContent = "Coverage backtest for " + g.label + ": simulating each held-out month (" + cov.months.join(" and ") +
+      ") from the data available before it, the 90% band contained the real price on " + cov.covered + " of " + cov.days + " days (" + F.pct(cov.pct, 0) + ").";
+  }
+  function drawTable() {
+    if (!last) return;
+    var out = last.out, v = last.v;
+    $("fullTable").innerHTML = "<thead><tr><th>Plan</th><th class=\"num\">Median</th><th class=\"num\">5–95% range</th><th class=\"num\">Worst-5% average</th><th class=\"num\">Finishes late</th>" +
+      (v.budget !== null ? "<th class=\"num\">Over budget</th>" : "") +
+      "<th class=\"num\">Interruptions</th><th class=\"num\">Work redone</th></tr></thead><tbody>" +
+      out.strategies.map(function (s) {
+        return "<tr" + (s.id === out.recommendation.id ? " class=\"win\"" : "") + "><td>" + s.name + "</td><td class=\"num\">" + F.money(s.median) +
+          "</td><td class=\"num\">" + F.money(s.p5) + " – " + F.money(s.p95) + "</td><td class=\"num\">" + F.money(s.es95) +
+          "</td><td class=\"num\">" + F.pct(s.pMiss, 0) + "</td>" +
+          (v.budget !== null ? "<td class=\"num\">" + F.pct(s.pOver, 0) + "</td>" : "") +
+          "<td class=\"num\">" + s.interruptions.toFixed(1) + "</td><td class=\"num\">" + F.int(s.lostHours) + " h</td></tr>";
+      }).join("") + "</tbody>";
+    $("iidNote").textContent = "Why blocks, not days: resampling the price changes one day at a time (the naive i.i.d. way) puts the all-spot median at " +
+      F.money(out.iidSpotMedian) + " instead of " + F.money(out.blockSpotMedian) +
+      ". Shuffling single days breaks up the multi-day price runs that cause interruptions and deadline misses, so it misprices exactly the risk this tool exists to show.";
+  }
+
+  $("copyLink").addEventListener("click", function () { Tool.copy(location.href, $("toast"), "Link copied: it opens with these inputs."); });
+  $("copySummary").addEventListener("click", function () {
+    if (!last) return; var v = last.v;
+    var ckLabel = $("ckpt").selectedOptions[0].textContent;
+    Tool.copy(["GPU plan: " + last.title, last.body, "",
+      "Inputs: " + F.int(v.hours) + " " + last.g.label + " GPU-hours in " + v.weeks + " weeks, checkpoints " + ckLabel.toLowerCase() +
+      ", on-demand " + price(last.pOd) + "/GPU-hour, reserved " + price(last.pRes) + " (" + v.term + "-month term)" +
+      (v.budget !== null ? ", budget " + F.money(v.budget) : "") + ".",
+      "Open with these inputs: " + location.href].join("\n"), $("toast"), "Summary copied.");
+  });
+
+  run();
+})();

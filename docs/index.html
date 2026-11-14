@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU Budget Planner: reserve, on demand, spot, or a mix?</title>
+<meta name="description" content="You need this many GPU-hours by this deadline. Should you reserve, pay on demand, use spot, or mix, and how sure can you be of the bill? Simulated on real spot price history.">
+<script src="kit-theme.js"></script>
+<link rel="stylesheet" href="kit.css">
+<link rel="stylesheet" href="tool.css">
+<style>
+  .boxrow-label { font-size: var(--fs-small); fill: var(--fg); }
+  .boxrow-label.win { font-weight: 700; }
+  .boxlate { font-size: var(--fs-caption); fill: var(--bad); font-weight: 700; }
+  .boxaxis { font-size: var(--fs-caption); fill: var(--muted); }
+  tr.win td { background: var(--accent-soft); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <header class="kit-header">
+    <div class="kit-header-top">
+      <p class="kit-kicker">Omid Golchin · Decision tools</p>
+      <button type="button" class="kit-theme-toggle" aria-pressed="false">◐ Theme</button>
+    </div>
+    <h1>GPU Budget Planner</h1>
+    <p class="kit-tagline">You need this many GPU-hours by this deadline. Should you reserve, pay on demand, use spot, or mix, and how sure can you be of the bill?</p>
+  </header>
+
+  <div class="tool-modes" role="tablist" aria-label="Mode">
+    <button type="button" role="tab" class="active" aria-selected="true">Plan my compute</button>
+  </div>
+
+  <div class="work">
+    <form class="panel" novalidate onsubmit="return false">
+      <div class="panel-head">
+        <h2>Your job</h2>
+        <select class="example" id="example" aria-label="Load an example"><option value="">Load example…</option></select>
+      </div>
+      <div class="fields">
+        <div class="field"><label for="gpu">GPU type</label>
+          <select id="gpu">
+            <option value="h100">H100</option>
+            <option value="a100">A100</option>
+            <option value="v100">V100 (older generation)</option>
+          </select>
+          <div class="hint" id="gpuHint"></div></div>
+        <div class="field"><label for="hours">GPU-hours needed</label><input id="hours" type="number" min="1" step="any" inputmode="decimal"></div>
+        <div class="field"><label for="weeks">Deadline</label><div class="input-wrap"><input id="weeks" type="number" min="1" max="52" step="1" inputmode="numeric"><span class="unit">weeks</span></div></div>
+        <div class="field"><label for="budget">Budget <span class="muted">(optional)</span></label><div class="input-wrap"><input id="budget" type="number" min="0" step="any" inputmode="decimal" placeholder="no limit"><span class="unit">$</span></div></div>
+        <div class="field"><label for="ckpt">Checkpoint every</label>
+          <select id="ckpt">
+            <option value="0.5">30 minutes</option>
+            <option value="1">1 hour</option>
+            <option value="2">2 hours</option>
+            <option value="4">4 hours</option>
+            <option value="8">8 hours</option>
+            <option value="24">Once a day</option>
+            <option value="168">Once a week</option>
+          </select>
+          <div class="hint">When spot capacity is reclaimed, work since the last checkpoint is redone.</div></div>
+        <div class="field"><label for="term">Reservation term</label>
+          <select id="term">
+            <option value="1">1 month</option>
+            <option value="3">3 months</option>
+            <option value="6">6 months</option>
+            <option value="12">12 months</option>
+            <option value="24">24 months</option>
+            <option value="36">36 months</option>
+          </select></div>
+        <div class="field"><label for="onDemand">On-demand price</label><div class="input-wrap"><input id="onDemand" type="number" min="0" step="any" inputmode="decimal"><span class="unit">$/GPU-hour</span></div><div class="hint" id="odHint"></div></div>
+        <div class="field"><label for="reserved">Reserved price</label><div class="input-wrap"><input id="reserved" type="number" min="0" step="any" inputmode="decimal"><span class="unit">$/GPU-hour</span></div><div class="hint" id="resHint"></div></div>
+      </div>
+      <div class="actions" style="margin-top:12px">
+        <button type="button" id="assistToggle">✦ Fill from my plan</button>
+        <span class="footnote">Paste a training plan or a budget note; an AI model fills the form, the tool does the math.</span>
+      </div>
+      <div id="assistMount"></div>
+    </form>
+
+    <div>
+      <section class="panel verdict" id="verdict" aria-live="polite">
+        <p class="v-kicker">Recommendation</p>
+        <p class="v-title" id="vTitle">Loading price data…</p>
+        <p class="v-body" id="vBody"></p>
+        <div class="kpis" id="kpis"></div>
+        <div class="checks" id="checks"></div>
+      </section>
+      <div class="actions">
+        <button type="button" id="copySummary">Copy summary</button>
+        <button type="button" id="copyLink">Copy link</button>
+        <span class="toast" id="toast"></span>
+      </div>
+    </div>
+  </div>
+
+  <section class="panel" style="margin-top:16px">
+    <h2>What each plan costs</h2>
+    <div class="svgchart" id="boxChart"></div>
+    <p class="chart-caption" id="boxCaption"></p>
+  </section>
+
+  <details class="more">
+    <summary>Settings <span class="sub">spot price cap, simulation detail</span></summary>
+    <div class="more-body">
+      <div class="fields" style="max-width:560px">
+        <div class="field"><label for="cap">Spot price cap</label><div class="input-wrap"><input id="cap" type="number" min="0" step="any" inputmode="decimal" placeholder="On-demand price"><span class="unit">$/GPU-hour</span></div><div class="hint">Spot capacity counts as yours while the day's price is at or below the cap. The usual bid is the on-demand price; leave empty for that.</div></div>
+        <div class="field"><label for="block">Bootstrap block length</label>
+          <select id="block"><option value="7">7 days</option><option value="14">14 days</option><option value="28">28 days</option></select>
+          <div class="hint">How much price history is resampled at a time. Longer blocks keep longer price runs. 28 days scored best in the coverage backtest.</div></div>
+        <div class="field"><label for="paths">Simulated price paths</label>
+          <select id="paths"><option value="200">200</option><option value="400">400</option><option value="800">800</option></select></div>
+      </div>
+    </div>
+  </details>
+
+  <details class="more">
+    <summary>Full numbers <span class="sub">every plan, and the naive resample</span></summary>
+    <div class="more-body">
+      <div class="table-scroll"><table id="fullTable"></table></div>
+      <p class="small" id="iidNote" style="margin-top:10px"></p>
+    </div>
+  </details>
+
+  <details class="more">
+    <summary>Spot price history and the forecast band <span class="sub">what the simulation is built from</span></summary>
+    <div class="more-body">
+      <div class="svgchart" id="fanChart"></div>
+      <p class="chart-caption" id="fanCaption"></p>
+      <p class="small" id="coverageNote"></p>
+    </div>
+  </details>
+
+  <details class="more">
+    <summary>How the verdict is decided <span class="sub">the model, the rules, the data</span></summary>
+    <div class="more-body small">
+      <p><b>The job.</b> Your GPU-hours are spread evenly over the deadline: the same amount of finished work is due every day. A plan splits that daily work between reserved capacity and on-demand (fixed prices, always there) and spot (a simulated price each day).</p>
+      <p><b>Spot.</b> Daily spot prices are simulated by block bootstrap: stretches of 28 days of real price changes are resampled and chained, so multi-day runs of high or low prices persist, which is what makes spot risky. Paths start at the recent price level (the median of the last 30 observed days). Spot work runs on a day when the price is at or below your cap. Crossing above the cap is an interruption: the work done since the last checkpoint is lost and redone. An interruption lands at a uniform point in the checkpoint cycle, so the expected loss is half an interval of work. Spot capacity can catch up at up to three times its base rate. Plans marked with a fallback do any undone spot work in the last week on on-demand instead; a plan with no fallback that ends the window with work undone finishes late, at the on-demand price.</p>
+      <div class="formula">daily work = GPU-hours ÷ days in the deadline
+interruption loss = spot base rate × checkpoint interval ÷ 2
+bill = reserved share × hours × reserved price
+     + on-demand share × hours × on-demand price
+     + spot work at simulated prices (late finish at the on-demand price)
+expected shortfall = average of the bills at or above the 95th percentile</div>
+      <p><b>The verdict.</b> A plan is feasible if it finishes on time in at least 95% of simulated runs. With a budget, plans that go over it in at most 20% of runs are preferred. The feasible plan with the lowest median bill wins, with two exceptions: if even the cheapest guaranteed plan (all reserved or all on-demand, both fixed-price) has a median above your budget, the verdict says so instead of recommending a gamble; and if a fixed-price plan wins while the cheapest risky plan would save under 2%, the verdict calls the sure thing the winner. Expected shortfall follows Acerbi &amp; Tasche, "On the coherence of expected shortfall" (2002).</p>
+      <p><b>The data.</b> Spot price changes come from the AWS Spot Price History archive (Pauley, Zenodo, DOI 10.5281/zenodo.14254112, CC BY 4.0): daily us-east-1 prices for p5.48xlarge (H100), p4d.24xlarge (A100) and p3.2xlarge (V100), May to November 2024. Because the archive's price level is from 2024, each series is multiplied by one constant so its last-30-day median equals the current market spot median from GetDeploying's GPU price history (CC BY 4.0). The ups and downs are AWS data; the level is today's. On-demand and reserved prefills are GetDeploying's weekly medians for the week of <span id="gdWeek">the latest data</span>. Every price is editable: if you have a quote, use yours.</p>
+      <p class="footnote">The price-history analysis behind this tool (per-GPU coverage, forecast comparisons) is in <a href="https://github.com/omidgolchin/gpu-budget-planner#research-notes">Research notes</a>.</p>
+    </div>
+  </details>
+
+  <footer class="kit-footer">
+    <p class="kit-siblings"><span class="kit-siblings-label">More tools:</span>
+      <a href="https://omidgolchin.github.io/bayesian-ab-lab/">A/B Test Decision Tool</a> ·
+      <a href="https://omidgolchin.github.io/queue-simulator/">Call Center Staffing Planner</a> ·
+      <a href="https://omidgolchin.github.io/experiment-hazard-simulator/">Agent Eval Planner</a> ·
+      <a href="https://omidgolchin.github.io/gpu-budget-planner/" aria-current="page">GPU Budget Planner</a></p>
+    <p>Built by Omid Golchin · <a href="https://github.com/omidgolchin/gpu-budget-planner">Code, tests and design decisions</a> · Everything runs in your browser; nothing you type is sent anywhere unless you use the AI fill with your own key.</p>
+  </footer>
+</main>
+<script src="gpuplan.js"></script>
+<script src="tool-common.js"></script>
+<script src="assist-config.js"></script>
+<script src="data/prices.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
