@@ -197,6 +197,7 @@
       }
       if (W.pMiss > 0) body += " This plan itself finishes late in " + F.pct(W.pMiss, 0) + " of runs.";
     }
+    body += " Reservations are priced " + (v.after === "reuse" ? "on this job's hours only, because you said the reserved GPUs go to other work after the deadline." : "for every hour of the " + v.term + "-month term, because you said the reserved GPUs sit idle after the deadline.");
     $("vTitle").textContent = title; $("vBody").textContent = body;
     $("verdict").className = "panel verdict " + rec.cls;
     last.title = title; last.body = body;
@@ -224,7 +225,7 @@
     var tailTxt = "The 95th percentile bill for the recommended plan is " + F.money(W.p95) +
       "; the average of the worst 5% of bills (the expected shortfall, Acerbi & Tasche 2002) is " + F.money(W.es95) +
       ", " + F.pct((W.es95 - W.p95) / W.p95, 1) + " higher. Budget against the shortfall, not the percentile.";
-    c.push([v.budget !== null && W.es95 > v.budget ? "warn" : "info", "TAIL RISK", "Expected shortfall", tailTxt]);
+    c.push([v.budget !== null && W.es95 > v.budget ? "warn" : "info", "BAD CASE", "Expected shortfall", tailTxt]);
     /* Budget. */
     if (rec.reason === "budget-infeasible") {
       c.push(["fail", "OVER BUDGET", "Budget", "No fixed-price plan fits " + F.money(v.budget) +
@@ -243,10 +244,10 @@
       F.int(lostW) + (Math.round(lostW) === 1 ? " GPU-hour" : " GPU-hours") + (lostW > 0 ? " (" + F.pct(lostW / v.hours, lostW / v.hours < 0.01 ? 1 : 0) + " of the job)" : "") + "." : "";
     if (last.out1 && last.out1.recommendation.id !== rec.id) {
       var W1 = byId(last.out1)[last.out1.recommendation.id];
-      c.push(["warn", "CHECKPOINTS", "Checkpoint interval", fleet + "A job that runs its nodes in lockstep stops whenever any one is reclaimed, and loses half a checkpoint interval of everyone's work." + redone +
+      c.push(["warn", "CHECKPOINTS", "Checkpoint interval", fleet + "A job that runs its nodes in lockstep <button type=\"button\" data-tip=\"lockstep\"></button> stops whenever any one is reclaimed, and loses half a checkpoint interval of everyone's work." + redone +
         " With hourly checkpoints the winner would be " + stratName(last.out1, last.out1.recommendation.id).toLowerCase() + " (median " + F.money(W1.median) + "): checkpoint more often if you can."]);
     } else if (last.out1 && Math.abs(byId(last.out1)[rec.id].median - W.median) > 0.02 * W.median) {
-      c.push(["info", "CHECKPOINTS", "Checkpoint interval", fleet + "A lockstep job stops whenever any node is reclaimed." + redone +
+      c.push(["info", "CHECKPOINTS", "Checkpoint interval", fleet + "A lockstep <button type=\"button\" data-tip=\"lockstep\"></button> job stops whenever any node is reclaimed." + redone +
         " Hourly checkpoints would put this plan's median at " + F.money(byId(last.out1)[rec.id].median) + " instead of " + F.money(W.median) + "."]);
     } else if (v.reclaim > 0) {
       c.push(["ok", "CHECKPOINTS", "Checkpoint interval", fleet + "With nodes reclaimed " + reclaimTxt + ", a job this size loses little to interruptions at " + v.ckpt + "-hour checkpoints." + redone +
@@ -314,7 +315,7 @@
         lt.textContent = "late " + F.pct(s.pMiss, 0);
       }
     });
-    $("boxCaption").textContent = "Each row: the middle 50% of simulated bills (box), the median (white line), the 5th to 95th percentile (whiskers), and the expected shortfall (diamond). " +
+    $("boxCaption").textContent = "How to read it: each row is one plan. The box holds the middle 50% of simulated bills, the white line is the median, the whiskers run from the 5th to the 95th percentile, and the diamond is not a percentile: it is the expected shortfall, the average of the worst 5% of bills. A plan with a low box but a far-right diamond is cheap on average and painful in a bad month. " +
       "All plans are scored on the same " + last.v.paths + " simulated price paths. Rows marked late miss the deadline in more than 5% of runs.";
   }
   function drawFan() {
@@ -378,6 +379,8 @@
     after: { t: "Reserved GPUs after the deadline", d: "If the reservation outlasts the job, the remaining hours are either wasted (you still pay) or used by other work. Only count them as used if your team will really use them." },
     reclaim: { t: "Spot reclaims", d: "How often the provider takes spot capacity back. Each reclaim costs the work since the last checkpoint plus restart time. The simulation draws reclaims at random at this rate (a Poisson process) for each node." },
     paths: { t: "Simulated price paths", d: "Future spot prices are unknown, so the tool builds many plausible price paths by resampling blocks of real price history (a block bootstrap) and prices every plan on each one." },
+    lockstep: { t: "Lockstep training", d: "Distributed training where every node advances together, step by step. If one node is taken away, the whole job stops and resumes from the last checkpoint, so one reclaim costs everyone's work since then, not just that node's." },
+    block: { t: "Bootstrap block length", d: "The simulation builds future spot prices by stitching together random stretches of real price history. This sets how long each stretch is. Longer stretches keep price runs (a week of high prices) intact; 28 days predicted held-out months best." },
     plans: { t: "Reading the plan chart", d: "Each row is a plan. The box covers the middle 50% of simulated bills, the whiskers the 5th to 95th percentile, and the diamond is the expected shortfall: the average of the worst 5% of bills. A plan whose box is low but whose diamond sits far right is cheap on average and risky in a bad month." },
     median: { t: "Median bill", d: "Half the simulated price paths give a lower bill, half a higher one. The typical case, not the worst." },
     es: { t: "Expected shortfall (worst 5%)", d: "The average bill across the worst 5% of simulated outcomes. Budgeting to this, rather than the 95th percentile alone, accounts for how bad the tail can get (Acerbi and Tasche, 2002)." },
