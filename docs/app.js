@@ -201,11 +201,11 @@
     $("verdict").className = "panel verdict " + rec.cls;
     last.title = title; last.body = body;
 
-    var k = [[F.money(W.median), "median bill"], [F.money(W.es95), "average of the worst 5% of bills"]];
+    var k = [[F.money(W.median), "median bill", "median"], [F.money(W.es95), "average of the worst 5% of bills", "es"]];
     if (v.budget !== null) k.push([F.pct(W.pOver, 0), "chance over budget"]);
     else k.push([W.interruptions ? W.interruptions.toFixed(1) : "0", "spot interruptions per run"]);
-    k.push([F.pct(W.pMiss, 0), "chance of finishing late"]);
-    $("kpis").innerHTML = k.map(function (x) { return '<div class="kpi"><span class="k-val">' + x[0] + '</span><span class="k-lbl">' + x[1] + "</span></div>"; }).join("");
+    k.push([F.pct(W.pMiss, 0), "chance of finishing late", "late"]);
+    $("kpis").innerHTML = k.map(function (x) { return '<div class="kpi"><span class="k-val">' + x[0] + '</span><span class="k-lbl">' + x[1] + (x[2] ? ' <button type="button" data-tip="' + x[2] + '"></button>' : "") + "</span></div>"; }).join("");
 
     var c = [];
     /* Deadline risk: a plan no pricier than the winner that is often late. */
@@ -370,6 +370,18 @@
       ", on-demand " + price(last.pOd) + "/GPU-hour, reserved " + price(last.pRes) + " (" + v.term + "-month term)" +
       (v.budget !== null ? ", budget " + F.money(v.budget) : "") + ".",
       "Open with these inputs: " + location.href].join("\n"), $("toast"), "Summary copied.");
+  });
+
+  Tool.explain({
+    ckpt: { t: "Checkpoints", d: "A checkpoint saves the training state so a stopped job can resume. Spot GPUs can be taken back at short notice; everything since the last checkpoint is lost and redone. Frequent checkpoints make spot cheaper in practice." },
+    term: { t: "Reservation term", d: "Reserved capacity is bought for a fixed term at a discount. You pay for every hour of the term, used or not, so a long term only pays off if the GPUs stay busy." },
+    after: { t: "Reserved GPUs after the deadline", d: "If the reservation outlasts the job, the remaining hours are either wasted (you still pay) or used by other work. Only count them as used if your team will really use them." },
+    reclaim: { t: "Spot reclaims", d: "How often the provider takes spot capacity back. Each reclaim costs the work since the last checkpoint plus restart time. The simulation draws reclaims at random at this rate (a Poisson process) for each node." },
+    paths: { t: "Simulated price paths", d: "Future spot prices are unknown, so the tool builds many plausible price paths by resampling blocks of real price history (a block bootstrap) and prices every plan on each one." },
+    plans: { t: "Reading the plan chart", d: "Each row is a plan. The box covers the middle 50% of simulated bills, the whiskers the 5th to 95th percentile, and the diamond is the expected shortfall: the average of the worst 5% of bills. A plan whose box is low but whose diamond sits far right is cheap on average and risky in a bad month." },
+    median: { t: "Median bill", d: "Half the simulated price paths give a lower bill, half a higher one. The typical case, not the worst." },
+    es: { t: "Expected shortfall (worst 5%)", d: "The average bill across the worst 5% of simulated outcomes. Budgeting to this, rather than the 95th percentile alone, accounts for how bad the tail can get (Acerbi and Tasche, 2002)." },
+    late: { t: "Chance of finishing late", d: "Share of simulated runs in which interruptions and redone work push the job past the deadline. Plans that miss in more than 5% of runs are not recommended." }
   });
 
   run();

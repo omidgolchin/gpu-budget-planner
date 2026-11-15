@@ -27,8 +27,13 @@
     <p class="kit-tagline">You need this many GPU-hours by this deadline. Should you reserve, pay on demand, use spot, or mix, and how sure can you be of the bill?</p>
   </header>
 
-  <div class="tool-modes" role="tablist" aria-label="Mode">
-    <button type="button" role="tab" class="active" aria-selected="true">Plan my compute</button>
+  <div class="guide" aria-label="How to use this tool">
+    <ol class="steps">
+      <li><b>Describe the job</b>: which GPU, how many GPU-hours, the deadline, and (optionally) the budget.</li>
+      <li><b>Say how the job copes with interruptions</b>: how often it saves a checkpoint, and what happens to reserved GPUs after the job.</li>
+      <li><b>Get the plan</b>: reserve, on-demand, spot or a mix, with the likely bill and the bad case. The chart compares every plan on the same simulated prices.</li>
+    </ol>
+    <p class="also"><b>Also here:</b> <i>Fill from my plan</i> reads a pasted training plan or budget note · <i>Spot price history</i> shows the data and the forecast band behind the simulation · <i>Copy link</i> saves your inputs.</p>
   </div>
 
   <div class="work">
@@ -45,10 +50,10 @@
             <option value="v100">V100 (older generation)</option>
           </select>
           <div class="hint" id="gpuHint"></div></div>
-        <div class="field"><label for="hours">GPU-hours needed</label><input id="hours" type="number" min="1" step="any" inputmode="decimal"></div>
-        <div class="field"><label for="weeks">Deadline</label><div class="input-wrap"><input id="weeks" type="number" min="1" max="52" step="1" inputmode="numeric"><span class="unit">weeks</span></div></div>
-        <div class="field"><label for="budget">Budget <span class="muted">(optional)</span></label><div class="input-wrap"><input id="budget" type="number" min="0" step="any" inputmode="decimal" placeholder="no limit"><span class="unit">$</span></div></div>
-        <div class="field"><label for="ckpt">Checkpoint every</label>
+        <div class="field"><label for="hours">GPU-hours needed</label><input id="hours" type="number" min="1" step="any" inputmode="decimal"><div class="hint">Total GPU time the job needs: GPUs × hours. 8 GPUs for 250 hours is 2,000 GPU-hours.</div></div>
+        <div class="field"><label for="weeks">Deadline</label><div class="input-wrap"><input id="weeks" type="number" min="1" max="52" step="1" inputmode="numeric"><span class="unit">weeks</span></div><div class="hint">When the job must be finished, counted from today.</div></div>
+        <div class="field"><label for="budget">Budget <span class="muted">(optional)</span></label><div class="input-wrap"><input id="budget" type="number" min="0" step="any" inputmode="decimal" placeholder="no limit"><span class="unit">$</span></div><div class="hint">What you can spend. The tool reports the chance each plan goes over it.</div></div>
+        <div class="field"><label for="ckpt">Checkpoint every <button type="button" data-tip="ckpt"></button></label>
           <select id="ckpt">
             <option value="0.5">30 minutes</option>
             <option value="1">1 hour</option>
@@ -59,7 +64,7 @@
             <option value="168">Once a week</option>
           </select>
           <div class="hint">When spot capacity is reclaimed, work since the last checkpoint is redone.</div></div>
-        <div class="field"><label for="term">Reservation term</label>
+        <div class="field"><label for="term">Reservation term <button type="button" data-tip="term"></button></label>
           <select id="term">
             <option value="1">1 month</option>
             <option value="3">3 months</option>
@@ -67,14 +72,14 @@
             <option value="12">12 months</option>
             <option value="24">24 months</option>
             <option value="36">36 months</option>
-          </select></div>
-        <div class="field full"><label for="after">After the deadline, reserved GPUs</label>
+          </select><div class="hint">Longer reservations are cheaper per hour but commit you for the whole term.</div></div>
+        <div class="field full"><label for="after">After the deadline, reserved GPUs <button type="button" data-tip="after"></button></label>
           <select id="after">
             <option value="idle" selected>Sit idle: you pay for every hour of the term</option>
             <option value="reuse">Go to other work: charge this job only its hours</option>
           </select>
           <div class="hint">A reservation is a commitment for its whole term. Count only this job's hours if the team will use the GPUs afterwards.</div></div>
-        <div class="field full"><label for="reclaim">Spot nodes get reclaimed</label>
+        <div class="field full"><label for="reclaim">Spot nodes get reclaimed <button type="button" data-tip="reclaim"></button></label>
           <select id="reclaim">
             <option value="0">Never: price cap only</option>
             <option value="0.033333">About once a month per node</option>
@@ -110,7 +115,7 @@
   </div>
 
   <section class="panel" style="margin-top:16px">
-    <h2>What each plan costs</h2>
+    <h2>What each plan costs <button type="button" data-tip="plans"></button></h2>
     <div class="svgchart" id="boxChart"></div>
     <p class="chart-caption" id="boxCaption"></p>
   </section>
@@ -123,8 +128,8 @@
         <div class="field"><label for="block">Bootstrap block length</label>
           <select id="block"><option value="7">7 days</option><option value="14">14 days</option><option value="28">28 days</option></select>
           <div class="hint">How much price history is resampled at a time. Longer blocks keep longer price runs. 28 days scored best in the coverage backtest.</div></div>
-        <div class="field"><label for="paths">Simulated price paths</label>
-          <select id="paths"><option value="200">200</option><option value="400">400</option><option value="800">800</option></select></div>
+        <div class="field"><label for="paths">Simulated price paths <button type="button" data-tip="paths"></button></label>
+          <select id="paths"><option value="200">200</option><option value="400">400</option><option value="800">800</option></select><div class="hint">More paths give steadier percentiles but take a little longer.</div></div>
       </div>
     </div>
   </details>
@@ -164,11 +169,7 @@ expected shortfall = average of the bills at or above the 95th percentile</div>
   </details>
 
   <footer class="kit-footer">
-    <p class="kit-siblings"><span class="kit-siblings-label">More tools:</span>
-      <a href="https://omidgolchin.github.io/bayesian-ab-lab/">A/B Test Decision Tool</a> ·
-      <a href="https://omidgolchin.github.io/queue-simulator/">Call Center Staffing Planner</a> ·
-      <a href="https://omidgolchin.github.io/experiment-hazard-simulator/">Agent Eval Planner</a> ·
-      <a href="https://omidgolchin.github.io/gpu-budget-planner/" aria-current="page">GPU Budget Planner</a></p>
+    <p class="kit-siblings"></p>
     <p>Built by Omid Golchin · <a href="https://github.com/omidgolchin/gpu-budget-planner">Code, tests and design decisions</a> · Everything runs in your browser; nothing you type is sent anywhere unless you use the AI fill with your own key.</p>
   </footer>
 </main>
