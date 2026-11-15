@@ -23,7 +23,8 @@ const rng = G.mulberry32(42);
 const first5 = Array.from({length: 5}, () => rng());
 const cases = job.cases.map(c => {
   const out = G.plan(c.spot, c.hours, c.weeks, c.budget, c.ckpt, c.pRes, c.pOd,
-                     {paths: c.paths, seed: c.seed});
+                     {paths: c.paths, seed: c.seed, reclaim: c.reclaim || 0,
+                      termHours: c.termHours == null ? null : c.termHours});
   return { first5, strategies: out.strategies.map(s => ({
       id: s.id, median: s.median, p95: s.p95, es95: s.es95,
       pMiss: s.pMiss, pOver: s.pOver, lostHours: s.lostHours })),
@@ -48,6 +49,8 @@ CASES = [
      "ckpt": 2.0, "paths": 200},
     {"gpu": "a100", "seed": 7, "hours": 5000, "weeks": 3, "budget": None,
      "ckpt": 0.5, "paths": 200},
+    {"gpu": "h100", "seed": 9, "hours": 40000, "weeks": 4, "budget": 120000.0,
+     "ckpt": 4.0, "paths": 200, "reclaim": 1 / 24, "termHours": 730.0},
     {"gpu": "v100", "seed": 123, "hours": 1200, "weeks": 10, "budget": 1400.0,
      "ckpt": 24.0, "paths": 200},
 ]
@@ -61,7 +64,7 @@ def test_rng_stream_is_bit_exact():
     assert out[0]["first5"] == py
 
 
-def test_plan_agrees_on_three_seeds():
+def test_plan_agrees_on_four_cases():
     jobs = []
     for c in CASES:
         g = PRICES["gpus"][c["gpu"]]
@@ -72,7 +75,9 @@ def test_plan_agrees_on_three_seeds():
         g = PRICES["gpus"][c["gpu"]]
         py = engine.plan(g["spot"], c["hours"], c["weeks"], c["budget"],
                          c["ckpt"], g["reservedByTerm"]["12"], g["onDemand"],
-                         paths_n=c["paths"], seed=c["seed"])
+                         paths_n=c["paths"], seed=c["seed"],
+                         reclaim=c.get("reclaim", 0.0),
+                         term_hours=c.get("termHours"))
         assert py["recommendation"]["id"] == jout["recommendation"]["id"]
         assert py["recommendation"]["cls"] == jout["recommendation"]["cls"]
         assert py["iid_spot_median"] == pytest.approx(jout["iidSpotMedian"], rel=1e-9)

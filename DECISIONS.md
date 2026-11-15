@@ -76,3 +76,26 @@ more conservative option, with reasons.
     v-accent, v-bad and the invalid-input state are reachable through
     the examples, and deadline risk surfaces through the LATE RISK
     check instead.
+
+Revisions after review
+----------------------
+
+- **Interruptions from capacity reclaims, not only price.** AWS stopped
+  interrupting spot instances over competing bids at the end of 2017;
+  prices now move slowly and reclaims come when EC2 needs the capacity
+  (AWS Compute Blog, "New Amazon EC2 Spot pricing model", March 2018).
+  The price-cap mechanism alone produced almost no interruptions on these
+  series, so checkpoints never mattered. Reclaims are now a per-node rate
+  the user chooses; a lockstep job loses half a checkpoint interval of
+  the whole fleet's work per reclaim. Counts per day are Poisson by
+  inverse transform from one uniform per day and path, on a stream
+  separate from prices and shared by every plan (common random numbers),
+  so the engines still agree exactly.
+- **Reservations are commitments.** Charging reserved GPUs per hour used
+  made long terms look cheapest for short jobs. Reserved capacity is now
+  whole GPUs for whole terms (months x 730 hours), unless the user says
+  the GPUs go on to other work. Defaults and short-deadline examples use
+  the 1-month term; the 2-year V100 quote appears twice, idle and reused,
+  because the difference is the lesson.
+- **Near ties go to the on-time plan.** Medians within 0.5% are a tie,
+  decided by lower miss rate, then over-budget rate, then median.

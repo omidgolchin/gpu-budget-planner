@@ -157,3 +157,64 @@ def test_es95_never_below_p95_on_real_output():
         assert s["es95"] >= s["p95"] >= s["median"] >= s["p5"]
         assert 0.0 <= s["p_miss"] <= 1.0
         assert 0.0 <= s["p_over"] <= 1.0
+
+
+def test_poisson_inverse_transform():
+    """The reclaim count per day is Poisson by inverse transform: the
+    mean of many draws matches, and u below e^-m gives zero."""
+    import random
+    rng = random.Random(1)
+    draws = [engine.poisson_inv(rng.random(), 0.7) for _ in range(40000)]
+    assert abs(sum(draws) / len(draws) - 0.7) < 0.02
+    assert engine.poisson_inv(0.3, 1.0) == 0          # e^-1 = 0.368
+    assert engine.poisson_inv(0.5, 0.0) == 0
+
+
+def test_capacity_reclaims_match_hand_calculation():
+    """Flat prices below the cap, so only capacity reclaims interrupt.
+    Reclaims = rate x node-hours actually run (redone work runs too), and
+    each costs half a checkpoint interval of the lockstep fleet's work:
+    at least the base fleet's, at most the 3x catch-up fleet's."""
+    days, hours, gpn, ckpt = 28, 28 * 24 * 64.0, 8, 4.0   # 64 GPUs, 8 nodes
+    rate = 1 / 48                                          # per node-hour
+    path = [2.0] * days
+    strat = next(s for s in engine.STRATEGIES if s["id"] == "spot")
+    us = engine.reclaim_uniforms(days, 400, 3)
+    runs = [engine.run_strategy(path, strat, hours, 2.5, 3.0, 3.0, ckpt, rate, gpn, u) for u in us]
+    ints = sum(r["interruptions"] for r in runs)
+    node_hours = sum(r["spot_hours"] for r in runs) / gpn
+    assert abs(ints - rate * node_hours) / (rate * node_hours) < 0.03
+    per = sum(r["lost_hours"] for r in runs) / ints
+    assert 64 * ckpt / 2 * 0.99 <= per <= 3 * 64 * ckpt / 2
+    # no reclaims, no loss: the price-cap-only model is unchanged
+    r0 = engine.run_strategy(path, strat, hours, 2.5, 3.0, 3.0, ckpt, 0.0, gpn, us[0])
+    assert r0["interruptions"] == 0 and r0["lost_hours"] == 0.0
+
+
+def test_reclaims_make_checkpoints_matter_on_a_big_job():
+    """On a big lockstep job with frequent reclaims, weekly checkpoints
+    cost far more than hourly ones; on a tiny job they barely differ."""
+    spot = [1.5] * 120
+    big = dict(hours=40000, weeks=4, budget=None, p_res=2.5, p_od=3.0)
+    fine = engine.plan(spot, big["hours"], big["weeks"], None, 1.0, 2.5, 3.0, paths_n=60, reclaim=1 / 24)
+    coarse = engine.plan(spot, big["hours"], big["weeks"], None, 24.0, 2.5, 3.0, paths_n=60, reclaim=1 / 24)
+    f = {s["id"]: s for s in fine["strategies"]}["spotfb"]
+    c = {s["id"]: s for s in coarse["strategies"]}["spotfb"]
+    assert c["median"] > 1.2 * f["median"]
+
+
+def test_reservation_is_a_commitment():
+    """2,000 GPU-hours in 6 weeks needs 2 GPUs (1.98, rounded up). On a
+    12-month term the reservation pays for 2 GPUs x 8,760 hours whether
+    or not they are used; on a 1-month term, two terms cover 6 weeks.
+    Without a term (the GPUs go on to other work) only the job's hours
+    are charged."""
+    assert engine.reserved_cost(1.0, 2000, 42, 3.0, 8760.0) == 2 * 8760 * 3.0
+    assert engine.reserved_cost(1.0, 2000, 42, 3.0, 730.0) == 2 * 2 * 730 * 3.0
+    assert engine.reserved_cost(1.0, 2000, 42, 3.0, None) == 2000 * 3.0
+    assert engine.reserved_cost(0.5, 2000, 42, 3.0, 730.0) == 1 * 2 * 730 * 3.0
+    assert engine.reserved_cost(0.0, 2000, 42, 3.0, 730.0) == 0.0
+    out = engine.plan([1.5] * 120, 2000, 6, None, 2.0, 3.0, 3.5, paths_n=20, term_hours=8760.0)
+    s = {x["id"]: x for x in out["strategies"]}
+    assert s["reserved"]["median"] == 2 * 8760 * 3.0
+    assert out["recommendation"]["id"] != "reserved"

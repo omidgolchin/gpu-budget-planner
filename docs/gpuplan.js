@@ -15,6 +15,13 @@
  * on-demand fallback does any undone spot work in the last week on
  * on-demand, so it cannot finish late; any other strategy that ends with
  * a backlog misses the deadline and finishes late at the on-demand price.
+ *
+ * Spot nodes are also reclaimed for capacity, whatever the price (AWS has
+ * not interrupted spot over competing bids since late 2017): each running
+ * node at `reclaim` per node-hour, nodes of `gpn` GPUs, and a lockstep
+ * training job loses half a checkpoint interval of the whole fleet's work
+ * per reclaim. Daily counts are Poisson by inverse transform from one
+ * uniform per day and path, shared by all strategies.
  */
 (function (g) {
   "use strict";
@@ -83,9 +90,34 @@
     return paths;
   }
 
-  function runStrategy(prices, strat, hours, pRes, pOd, cap, ckptHours) {
+  function poissonInv(u, mean) {
+    if (mean <= 0) return 0;
+    var k = 0, p = Math.exp(-mean), cdf = p;
+    while (u > cdf && k < 1000) { k += 1; p *= mean / k; cdf += p; }
+    return k;
+  }
+  function reclaimUniforms(days, count, seed) {
+    var out = [];
+    for (var i = 0; i < count; i++) {
+      var rand = mulberry32(seed + 104729 * i + 5), row = [];
+      for (var t = 0; t < days; t++) row.push(rand());
+      out.push(row);
+    }
+    return out;
+  }
+  /* A reservation is a commitment: with termHours set, whole GPUs for whole
+   * terms, paid used or not; without it, only this job's hours. */
+  function reservedCost(fr, hours, days, pRes, termHours) {
+    if (fr <= 0) return 0;
+    if (termHours == null) return fr * hours * pRes;
+    var gpus = Math.ceil(fr * hours / (days * 24) - 1e-9);
+    var terms = Math.ceil(days * 24 / termHours - 1e-9);
+    return gpus * terms * termHours * pRes;
+  }
+  function runStrategy(prices, strat, hours, pRes, pOd, cap, ckptHours, reclaim, gpn, us, termHours) {
+    reclaim = reclaim || 0; gpn = gpn || 8;
     var days = prices.length, q = hours / days;
-    var fixed = strat.fr * hours * pRes + strat.fd * hours * pOd;
+    var fixed = reservedCost(strat.fr, hours, days, pRes, termHours) + strat.fd * hours * pOd;
     if (strat.fs <= 0) return { cost: fixed, missed: false, interruptions: 0, lostHours: 0, spotHours: 0 };
     var spotRate = strat.fs * q / 24, backlog = 0, lostTotal = 0;
     var interruptions = 0, spotCost = 0, spotHours = 0, prevAvail = true;
@@ -99,6 +131,14 @@
       if (avail) {
         done = Math.min(want, 3 * strat.fs * q);
         spotCost += done * price; spotHours += done;
+        if (reclaim > 0 && us && done > 0) {
+          /* capacity reclaims: paid-for work that is not progress */
+          var kk = poissonInv(us[t], reclaim * done / gpn);
+          if (kk) {
+            var lostR = Math.min(done, kk * (done / 24) * ckptHours / 2);
+            done -= lostR; lostTotal += lostR; interruptions += kk;
+          }
+        }
       }
       var rem = want - done;
       if (strat.fb && t >= days - 7 && rem > 0) { spotCost += rem * pOd; spotHours += rem; rem = 0; }
@@ -145,10 +185,15 @@
         var calm = feasible.filter(function (s) { return (byId[s.id].pOver || 0) <= OVER_OK; });
         if (calm.length) pool = calm;
       }
-      var win = pool[0];
-      pool.forEach(function (s) {
+      /* bills within 0.5% of the cheapest tie; the tie goes to the plan
+       * least likely to finish late, then least over budget, then cheaper */
+      var bestMed = Math.min.apply(null, pool.map(function (s) { return byId[s.id].median; }));
+      var near = pool.filter(function (s) { return byId[s.id].median <= bestMed * 1.005; });
+      var win = near[0];
+      near.forEach(function (s) {
         var a = byId[s.id], b = byId[win.id];
-        if (a.median < b.median || (a.median === b.median && (a.pOver || 0) < (b.pOver || 0))) win = s;
+        var ka = [a.pMiss, a.pOver || 0, a.median], kb = [b.pMiss, b.pOver || 0, b.median];
+        if (ka[0] < kb[0] || (ka[0] === kb[0] && (ka[1] < kb[1] || (ka[1] === kb[1] && ka[2] < kb[2])))) win = s;
       });
       var w = byId[win.id];
       var cheapest = Math.min.apply(null, STRATEGIES.map(function (s) { return byId[s.id].median; }));
@@ -169,14 +214,17 @@
   function plan(spot, hours, weeks, budget, ckptHours, pRes, pOd, opts) {
     opts = opts || {};
     var cap = opts.cap != null ? opts.cap : pOd;
+    var reclaim = opts.reclaim || 0, gpn = opts.gpn || 8;
+    var termHours = opts.termHours == null ? null : opts.termHours;
     var pathsN = opts.paths || 400, seed = opts.seed || 42, block = opts.block || 28;
     var days = Math.round(weeks) * 7;
     var paths = samplePaths(spot, days, pathsN, seed, block);
+    var usAll = reclaimUniforms(days, pathsN, seed);
     var stats = {}, detail = {};
     STRATEGIES.forEach(function (strat) {
       var costs = [], misses = [], ints = 0, lost = 0;
-      paths.forEach(function (path) {
-        var r = runStrategy(path, strat, hours, pRes, pOd, cap, ckptHours);
+      paths.forEach(function (path, pi) {
+        var r = runStrategy(path, strat, hours, pRes, pOd, cap, ckptHours, reclaim, gpn, usAll[pi], termHours);
         costs.push(r.cost); misses.push(r.missed); ints += r.interruptions; lost += r.lostHours;
       });
       stats[strat.id] = summarize(costs, misses, budget);
@@ -190,7 +238,7 @@
     }
     var spotStrat = STRATEGIES.filter(function (s) { return s.id === "spot"; })[0];
     var iid = iidPaths(spot, days, pathsN, seed);
-    var iidCosts = iid.map(function (p) { return runStrategy(p, spotStrat, hours, pRes, pOd, cap, ckptHours).cost; })
+    var iidCosts = iid.map(function (p, pi) { return runStrategy(p, spotStrat, hours, pRes, pOd, cap, ckptHours, reclaim, gpn, usAll[pi], termHours).cost; })
       .sort(function (a, b) { return a - b; });
     return {
       days: days,
@@ -209,6 +257,7 @@
 
   var api = { STRATEGIES: STRATEGIES, mulberry32: mulberry32, logReturns: logReturns,
               startPrice: startPrice, samplePaths: samplePaths, iidPaths: iidPaths, runStrategy: runStrategy,
+              poissonInv: poissonInv, reclaimUniforms: reclaimUniforms, reservedCost: reservedCost,
               percentile: percentile, summarize: summarize, recommend: recommend, plan: plan };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   g.GpuPlan = api;

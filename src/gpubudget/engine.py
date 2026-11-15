@@ -20,6 +20,22 @@ Model (kept deliberately simple, and stated on the page):
   of work at the plan's base spot rate. Work that cannot run waits in a
   backlog; the spot fleet can catch up at up to three times its base rate
   on a later day.
+- A reservation is a commitment. With ``term_hours`` set, the reserved
+  share runs on whole GPUs reserved for whole terms: enough GPUs to do
+  that share by the deadline, paid for every hour of every term needed to
+  cover it, used or not. With ``term_hours`` None the reserved share is
+  charged only for the hours this job uses (the reserved GPUs go on to
+  other work after the deadline).
+- Spot nodes are also reclaimed for capacity, whatever the price: since
+  the end of 2017 AWS has not interrupted spot instances over competing
+  bids, and prices move slowly; reclaims come when EC2 needs the capacity
+  back. Each running node is reclaimed at a constant rate
+  (``reclaim`` per node-hour; nodes hold ``gpn`` GPUs). A training job
+  that runs its nodes in lockstep stops whenever any one of them goes, so
+  each reclaim costs the whole fleet half a checkpoint interval of work.
+  Reclaims per day are Poisson, drawn by inverse transform from one
+  uniform per day and path, shared by every strategy (common random
+  numbers). ``reclaim = 0`` is the price-cap-only model.
 - A strategy with an on-demand fallback does any spot work that is still
   undone in the last week on on-demand instead of deferring it, so it
   cannot finish late. Any other strategy that ends the window with a
@@ -126,12 +142,47 @@ def iid_returns(spot, days, count, seed):
     return paths
 
 
-def run_strategy(prices, strat, hours, p_res, p_od, cap, ckpt_hours):
-    """Run one strategy over one price path. Returns cost and risk facts."""
+def poisson_inv(u, mean):
+    """Smallest k with P(Poisson(mean) <= k) >= u. Inverse transform, so
+    one uniform per day gives the day's reclaim count; the same ops in
+    docs/gpuplan.js."""
+    if mean <= 0:
+        return 0
+    k = 0
+    p = math.exp(-mean)
+    cdf = p
+    while u > cdf and k < 1000:
+        k += 1
+        p *= mean / k
+        cdf += p
+    return k
+
+
+def reclaim_rate(per_node_day):
+    """Reclaims per node-hour from reclaims per node-day."""
+    return per_node_day / 24.0
+
+
+def reserved_cost(fr, hours, days, p_res, term_hours=None):
+    """What reserving share ``fr`` of the job costs (see module notes)."""
+    if fr <= 0:
+        return 0.0
+    if term_hours is None:
+        return fr * hours * p_res
+    gpus = math.ceil(fr * hours / (days * 24.0) - 1e-9)
+    terms = math.ceil(days * 24.0 / term_hours - 1e-9)
+    return gpus * terms * term_hours * p_res
+
+
+def run_strategy(prices, strat, hours, p_res, p_od, cap, ckpt_hours,
+                 reclaim=0.0, gpn=8, us=None, term_hours=None):
+    """Run one strategy over one price path. Returns cost and risk facts.
+    ``reclaim``: capacity reclaims per node-hour; ``us``: one uniform per
+    day for the reclaim draws (no capacity reclaims without it)."""
     days = len(prices)
     q = hours / days
     fs, fr, fd = strat["fs"], strat["fr"], strat["fd"]
-    fixed = fr * hours * p_res + fd * hours * p_od
+    fixed = reserved_cost(fr, hours, days, p_res, term_hours) + fd * hours * p_od
     if fs <= 0:
         return {"cost": fixed, "missed": False, "interruptions": 0,
                 "lost_hours": 0.0, "spot_hours": 0.0}
@@ -157,6 +208,16 @@ def run_strategy(prices, strat, hours, p_res, p_od, cap, ckpt_hours):
             done = min(want, 3.0 * fs * q)
             spot_cost += done * price
             spot_hours += done
+            if reclaim > 0 and us is not None and done > 0:
+                # Capacity reclaims: node-hours run today = GPU-hours / gpn.
+                # Each reclaim stops the lockstep fleet and throws away half
+                # a checkpoint interval of its work: paid for, not progress.
+                k = poisson_inv(us[t], reclaim * done / gpn)
+                if k:
+                    lost = min(done, k * (done / 24.0) * ckpt_hours / 2.0)
+                    done -= lost
+                    lost_total += lost
+                    interruptions += k
         rem = want - done
         if strat["fb"] and t >= days - 7 and rem > 0:
             spot_cost += rem * p_od
@@ -214,7 +275,8 @@ def recommend(stats, budget):
       bill above it, the budget cannot be met: class v-bad.
     - Feasible plans finish on time in at least 95% of runs. Among them,
       with a budget, prefer plans over budget in at most 20% of runs; take
-      the lowest median bill (then the lowest over-budget rate).
+      the lowest median bill, counting bills within 0.5% of it as a tie
+      that goes to the plan least likely to finish late.
     - If no plan is feasible, take the one that misses least: v-warn.
     - v-accent when the winner is a fixed-price plan and spot would have
       saved less than 2%: the sure thing wins, say so.
@@ -235,8 +297,14 @@ def recommend(stats, budget):
             calm = [s for s in feasible if (by_id[s["id"]]["p_over"] or 0) <= OVER_OK]
             if calm:
                 pool = calm
-        win = min(pool, key=lambda s: (by_id[s["id"]]["median"],
-                                       by_id[s["id"]]["p_over"] or 0))
+        # Bills within half a percent of the cheapest are a tie; the tie
+        # goes to the plan that misses the deadline least, then the one
+        # over budget least, then the cheaper.
+        best_med = min(by_id[s["id"]]["median"] for s in pool)
+        near = [s for s in pool if by_id[s["id"]]["median"] <= best_med * 1.005]
+        win = min(near, key=lambda s: (by_id[s["id"]]["p_miss"],
+                                       by_id[s["id"]]["p_over"] or 0,
+                                       by_id[s["id"]]["median"]))
         w = by_id[win["id"]]
         cheapest = min(by_id[s["id"]]["median"] for s in STRATEGIES)
         if win["id"] in ("reserved", "ondemand") and w["median"] <= cheapest * 1.02:
@@ -249,20 +317,34 @@ def recommend(stats, budget):
     return {"id": win["id"], "cls": "v-warn", "reason": "nothing-feasible"}
 
 
+def reclaim_uniforms(days, count, seed):
+    """One uniform per day per path for the capacity-reclaim draws, on a
+    stream separate from the price paths."""
+    out = []
+    for i in range(count):
+        rand = mulberry32(seed + 104729 * i + 5)
+        out.append([rand() for _ in range(days)])
+    return out
+
+
 def plan(spot, hours, weeks, budget, ckpt_hours, p_res, p_od,
-         cap=None, paths_n=400, seed=42, block=28):
+         cap=None, paths_n=400, seed=42, block=28, reclaim=0.0, gpn=8,
+         term_hours=None):
     """Full evaluation. ``spot`` is the observed daily spot price series
-    (per GPU-hour); paths start from start_price(spot)."""
+    (per GPU-hour); paths start from start_price(spot). ``reclaim`` is
+    capacity reclaims per node-hour (0: price cap only)."""
     days = int(weeks) * 7
     if cap is None:
         cap = p_od
     paths = sample_paths(spot, days, paths_n, seed, block)
+    us_all = reclaim_uniforms(days, paths_n, seed)
     stats = {}
     detail = {}
     for strat in STRATEGIES:
         costs, misses, ints, lost = [], [], [], []
-        for path in paths:
-            r = run_strategy(path, strat, hours, p_res, p_od, cap, ckpt_hours)
+        for path, us in zip(paths, us_all):
+            r = run_strategy(path, strat, hours, p_res, p_od, cap, ckpt_hours,
+                             reclaim, gpn, us, term_hours)
             costs.append(r["cost"])
             misses.append(r["missed"])
             ints.append(r["interruptions"])
@@ -284,8 +366,9 @@ def plan(spot, hours, weeks, budget, ckpt_hours, p_res, p_od,
     iid_paths = iid_returns(spot, days, paths_n, seed)
     spot_strat = next(s for s in STRATEGIES if s["id"] == "spot")
     iid_costs = sorted(
-        run_strategy(p, spot_strat, hours, p_res, p_od, cap, ckpt_hours)["cost"]
-        for p in iid_paths)
+        run_strategy(p, spot_strat, hours, p_res, p_od, cap, ckpt_hours,
+                     reclaim, gpn, us, term_hours)["cost"]
+        for p, us in zip(iid_paths, us_all))
     return {
         "days": days,
         "strategies": [

@@ -6,18 +6,20 @@
   var F = Tool.fmt;
   var DATA = window.GPU_PRICES || null;
   var DEFAULTS = {
-    gpu: "h100", hours: 2000, weeks: 6, budget: 9000, ckpt: "2", term: "12",
+    gpu: "h100", hours: 2000, weeks: 6, budget: 9000, ckpt: "2", term: "1", reclaim: "0.142857", after: "idle",
     onDemand: "", reserved: "", cap: "", block: "28", paths: "400"
   };
   var EXAMPLES = [
-    { label: "Ablation runs: 2,000 H100-hours in 6 weeks", v: { gpu: "h100", hours: 2000, weeks: 6, budget: 9000, ckpt: "2", term: "12" } },
-    { label: "Workshop deadline: 5,000 A100-hours in 2 weeks", v: { gpu: "a100", hours: 5000, weeks: 2, budget: "", ckpt: "4", term: "12" } },
-    { label: "Tight budget: 4,000 H100-hours, $10,000", v: { gpu: "h100", hours: 4000, weeks: 8, budget: 10000, ckpt: "2", term: "12" } },
-    { label: "Patient V100 retrain: 800 hours, 12 weeks", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "12" } },
+    { label: "Ablation runs: 2,000 H100-hours in 6 weeks", v: { gpu: "h100", hours: 2000, weeks: 6, budget: 9000, ckpt: "2", term: "1" } },
+    { label: "Workshop deadline: 5,000 A100-hours in 2 weeks", v: { gpu: "a100", hours: 5000, weeks: 2, budget: "", ckpt: "4", term: "1" } },
+    { label: "Tight budget: 4,000 H100-hours, $10,000", v: { gpu: "h100", hours: 4000, weeks: 8, budget: 10000, ckpt: "2", term: "1" } },
+    { label: "Patient V100 retrain: 800 hours, 12 weeks", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "3" } },
     { label: "V100 on a 2-year reservation quote", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "24" } },
-    { label: "Big pretrain: 8,000 H100-hours, 12 weeks", v: { gpu: "h100", hours: 8000, weeks: 12, budget: 30000, ckpt: "4", term: "12" } }
+    { label: "Same quote, GPUs reused after the job", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "24", after: "reuse" } },
+    { label: "Big pretrain: 8,000 H100-hours, 12 weeks", v: { gpu: "h100", hours: 8000, weeks: 12, budget: 30000, ckpt: "4", term: "3" } },
+    { label: "Lockstep pretrain: 60,000 H100-hours in 4 weeks", v: { gpu: "h100", hours: 60000, weeks: 4, budget: 220000, ckpt: "8", term: "1", reclaim: "1" } }
   ];
-  var IDS = ["gpu", "hours", "weeks", "budget", "ckpt", "term", "onDemand", "reserved", "cap", "block", "paths"];
+  var IDS = ["gpu", "hours", "weeks", "budget", "ckpt", "term", "after", "reclaim", "onDemand", "reserved", "cap", "block", "paths"];
   var TITLES = {
     reserved: "Reserve everything now",
     ondemand: "Pay on demand for everything",
@@ -80,6 +82,7 @@
     document.querySelectorAll(".field.filled").forEach(function (f) { f.classList.remove("filled"); });
     $("gpu").value = v.gpu; $("term").value = v.term; fillPrices(true);
     $("hours").value = v.hours; $("weeks").value = v.weeks; $("budget").value = v.budget; $("ckpt").value = v.ckpt;
+    $("reclaim").value = v.reclaim || DEFAULTS.reclaim; $("after").value = v.after || DEFAULTS.after;
     run();
   });
   IDS.forEach(function (id) {
@@ -116,7 +119,7 @@
   function readInputs() {
     var v = {
       gpu: $("gpu").value, hours: num("hours"), weeks: num("weeks"), budget: num("budget"),
-      ckpt: Number($("ckpt").value), term: Number($("term").value),
+      ckpt: Number($("ckpt").value), term: Number($("term").value), reclaim: Number($("reclaim").value), after: $("after").value,
       onDemand: num("onDemand"), reserved: num("reserved"), cap: num("cap"),
       block: Number($("block").value), paths: Number($("paths").value)
     };
@@ -145,15 +148,24 @@
     var g = gpuData();
     var pOd = num("onDemand"), pRes = num("reserved");
     var cap = v.cap === null ? pOd : v.cap;
-    var out = GpuPlan.plan(g.spot, v.hours, v.weeks, v.budget, v.ckpt, pRes, pOd,
-      { cap: cap, paths: v.paths, block: v.block, seed: 42 });
+    var opt = { cap: cap, paths: v.paths, block: v.block, seed: 42, reclaim: v.reclaim / 24, gpn: 8,
+      termHours: v.after === "idle" ? v.term * 730 : null };
+    var out = GpuPlan.plan(g.spot, v.hours, v.weeks, v.budget, v.ckpt, pRes, pOd, opt);
     var out1 = null;
-    if (v.ckpt !== 1) out1 = GpuPlan.plan(g.spot, v.hours, v.weeks, v.budget, 1, pRes, pOd,
-      { cap: cap, paths: v.paths, block: v.block, seed: 42 });
+    if (v.ckpt !== 1) out1 = GpuPlan.plan(g.spot, v.hours, v.weeks, v.budget, 1, pRes, pOd, opt);
     last = { v: v, g: g, out: out, out1: out1, pOd: pOd, pRes: pRes, cap: cap };
     render();
   }
 
+  /* What a reservation commits to, when its GPUs sit idle after the job. */
+  function commitNote() {
+    var v = last.v; if (v.after !== "idle") return "";
+    var days = v.weeks * 7, gpus = Math.ceil(v.hours / (days * 24) - 1e-9);
+    var terms = Math.ceil(days * 24 / (v.term * 730) - 1e-9), paidH = gpus * terms * v.term * 730;
+    var idle = paidH - v.hours;
+    return idle > 0.05 * paidH ? " (" + gpus + " GPU" + (gpus > 1 ? "s" : "") + " for " + (terms * v.term) + " month" + (terms * v.term > 1 ? "s" : "") +
+      ", " + F.pct(idle / paidH, 0) + " of the paid hours idle after the job)" : "";
+  }
   function byId(out) { var m = {}; out.strategies.forEach(function (s) { m[s.id] = s; }); return m; }
   function stratName(out, id) { return out.strategies.filter(function (s) { return s.id === id; })[0].name; }
 
@@ -174,14 +186,14 @@
       if (v.budget !== null) body += " Chance of going over your " + F.money(v.budget) + " budget: " + F.pct(W.pOver, 0) + ".";
       if (rec.id === "spot" || rec.id === "spotfb") {
         body += " Reserving everything would cost " + F.money(res.median) + " for certain, " +
-          F.money(res.median - W.median) + " more than this plan's median.";
+          F.money(res.median - W.median) + " more than this plan's median" + commitNote() + ".";
       } else if (rec.id === "reserved" || rec.id === "ondemand") {
-        body += " All-spot's median is " + F.money(spot.median) + ", only " +
+        body += " All-spot's median is " + F.money(spot.median) + ", " +
           F.money(Math.abs(spot.median - W.median)) + (spot.median < W.median ? " less" : " more") +
           ", and it finishes late in " + F.pct(spot.pMiss, 0) + " of runs. The sure thing wins.";
       } else {
         body += " All-spot's median is " + F.money(spot.median) + " but it finishes late in " + F.pct(spot.pMiss, 0) +
-          " of runs; reserving everything costs " + F.money(res.median) + " for certain.";
+          " of runs; reserving everything costs " + F.money(res.median) + " for certain" + commitNote() + ".";
       }
       if (W.pMiss > 0) body += " This plan itself finishes late in " + F.pct(W.pMiss, 0) + " of runs.";
     }
@@ -221,20 +233,26 @@
       c.push([W.pOver <= 0.05 ? "ok" : W.pOver <= 0.2 ? "info" : "warn", "BUDGET", "Budget",
         "The recommended plan goes over " + F.money(v.budget) + " in " + F.pct(W.pOver, 0) + " of simulated runs."]);
     }
-    /* Checkpoints, against the hourly-checkpoint counterfactual. */
-    if (last.out1) {
-      var W1 = byId(last.out1)[last.out1.recommendation.id], spotNow = spot, spot1 = byId(last.out1).spot;
-      if (last.out1.recommendation.id !== rec.id) {
-        c.push(["warn", "CHECKPOINTS", "Checkpoint interval", "With hourly checkpoints the winner would be " +
-          stratName(last.out1, last.out1.recommendation.id).toLowerCase() + " (median " + F.money(W1.median) +
-          "). At your setting, redone work changes the answer. Checkpoint more often if you can."]);
-      } else if (Math.abs(spot1.median - spotNow.median) > 0.02 * spotNow.median) {
-        c.push(["info", "CHECKPOINTS", "Checkpoint interval", "Hourly checkpoints would put the all-spot median at " +
-          F.money(spot1.median) + " instead of " + F.money(spotNow.median) + ": at " + v.ckpt +
-          " hours between checkpoints, interruptions cost about " + F.int(spotNow.lostHours) + " redone GPU-hours per run."]);
-      } else {
-        c.push(["ok", "CHECKPOINTS", "Checkpoint interval", "Interruptions are rare at these prices, so the interval changes little here. It bites when spot prices hover near your cap."]);
-      }
+    /* Checkpoints and reclaims, against the hourly-checkpoint counterfactual. */
+    var gpus = v.hours / (v.weeks * 7 * 24), nodes = gpus / 8;
+    var fleet = "Your job keeps about " + (gpus >= 10 ? F.int(gpus) : F.num(gpus, 1)) + " GPUs busy (" +
+      (nodes < 1 ? "part of one 8-GPU node" : (nodes >= 10 ? F.int(nodes) : F.num(nodes, 1)) + " nodes of 8") + "). ";
+    var reclaimTxt = $("reclaim").selectedOptions[0].textContent.toLowerCase();
+    var lostW = W.lostHours, intsW = W.interruptions;
+    var redone = intsW >= 0.05 ? " The recommended plan sees about " + F.num(intsW, intsW >= 10 ? 0 : 1) + " interruptions per run and redoes about " +
+      F.int(lostW) + (Math.round(lostW) === 1 ? " GPU-hour" : " GPU-hours") + (lostW > 0 ? " (" + F.pct(lostW / v.hours, lostW / v.hours < 0.01 ? 1 : 0) + " of the job)" : "") + "." : "";
+    if (last.out1 && last.out1.recommendation.id !== rec.id) {
+      var W1 = byId(last.out1)[last.out1.recommendation.id];
+      c.push(["warn", "CHECKPOINTS", "Checkpoint interval", fleet + "A job that runs its nodes in lockstep stops whenever any one is reclaimed, and loses half a checkpoint interval of everyone's work." + redone +
+        " With hourly checkpoints the winner would be " + stratName(last.out1, last.out1.recommendation.id).toLowerCase() + " (median " + F.money(W1.median) + "): checkpoint more often if you can."]);
+    } else if (last.out1 && Math.abs(byId(last.out1)[rec.id].median - W.median) > 0.02 * W.median) {
+      c.push(["info", "CHECKPOINTS", "Checkpoint interval", fleet + "A lockstep job stops whenever any node is reclaimed." + redone +
+        " Hourly checkpoints would put this plan's median at " + F.money(byId(last.out1)[rec.id].median) + " instead of " + F.money(W.median) + "."]);
+    } else if (v.reclaim > 0) {
+      c.push(["ok", "CHECKPOINTS", "Checkpoint interval", fleet + "With nodes reclaimed " + reclaimTxt + ", a job this size loses little to interruptions at " + v.ckpt + "-hour checkpoints." + redone +
+        " The interval starts to matter as the fleet grows: every extra node is another way for the whole job to stop."]);
+    } else {
+      c.push(["info", "CHECKPOINTS", "Checkpoint interval", "Only price-cap interruptions are modeled, and spot prices rarely reach your cap. Spot nodes are reclaimed for capacity whatever the price, so set how often that happens to price it in."]);
     }
     /* Forecast coverage for this GPU's series. */
     var cov = last.g.coverage, covPct = cov.pct;

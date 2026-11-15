@@ -68,6 +68,21 @@
             <option value="24">24 months</option>
             <option value="36">36 months</option>
           </select></div>
+        <div class="field full"><label for="after">After the deadline, reserved GPUs</label>
+          <select id="after">
+            <option value="idle" selected>Sit idle: you pay for every hour of the term</option>
+            <option value="reuse">Go to other work: charge this job only its hours</option>
+          </select>
+          <div class="hint">A reservation is a commitment for its whole term. Count only this job's hours if the team will use the GPUs afterwards.</div></div>
+        <div class="field full"><label for="reclaim">Spot nodes get reclaimed</label>
+          <select id="reclaim">
+            <option value="0">Never: price cap only</option>
+            <option value="0.033333">About once a month per node</option>
+            <option value="0.142857" selected>About once a week per node</option>
+            <option value="1">About once a day per node</option>
+            <option value="3">Several times a day per node</option>
+          </select>
+          <div class="hint">Providers take spot capacity back when they need it, whatever the price (AWS stopped interrupting over competing bids in late 2017). Your own logs, or AWS's Spot Instance Advisor for your instance type and region, are the best guide.</div></div>
         <div class="field"><label for="onDemand">On-demand price</label><div class="input-wrap"><input id="onDemand" type="number" min="0" step="any" inputmode="decimal"><span class="unit">$/GPU-hour</span></div><div class="hint" id="odHint"></div></div>
         <div class="field"><label for="reserved">Reserved price</label><div class="input-wrap"><input id="reserved" type="number" min="0" step="any" inputmode="decimal"><span class="unit">$/GPU-hour</span></div><div class="hint" id="resHint"></div></div>
       </div>
@@ -104,7 +119,7 @@
     <summary>Settings <span class="sub">spot price cap, simulation detail</span></summary>
     <div class="more-body">
       <div class="fields" style="max-width:560px">
-        <div class="field"><label for="cap">Spot price cap</label><div class="input-wrap"><input id="cap" type="number" min="0" step="any" inputmode="decimal" placeholder="On-demand price"><span class="unit">$/GPU-hour</span></div><div class="hint">Spot capacity counts as yours while the day's price is at or below the cap. The usual bid is the on-demand price; leave empty for that.</div></div>
+        <div class="field"><label for="cap">Spot price cap</label><div class="input-wrap"><input id="cap" type="number" min="0" step="any" inputmode="decimal" placeholder="On-demand price"><span class="unit">$/GPU-hour</span></div><div class="hint">The most you will pay: on a day the spot price is above it your spot nodes stop. Leave empty for the on-demand price, the default. Capacity reclaims, set in the form, come on top.</div></div>
         <div class="field"><label for="block">Bootstrap block length</label>
           <select id="block"><option value="7">7 days</option><option value="14">14 days</option><option value="28">28 days</option></select>
           <div class="hint">How much price history is resampled at a time. Longer blocks keep longer price runs. 28 days scored best in the coverage backtest.</div></div>
