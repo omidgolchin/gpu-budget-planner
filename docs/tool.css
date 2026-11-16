@@ -143,3 +143,35 @@ select.example { font-size: var(--fs-small); }
 .jump { display: none; }
 @media (max-width: 820px) { .jump { display: inline-flex; align-items: center; min-height: 44px; margin: 0 0 var(--sp-2); font-size: var(--fs-small); font-weight: 600; } }
 .ctl-grid .ctl-hint { display: block; margin-top: 4px; font-weight: 400; }
+
+/* ---- GPU dashboard: this tool's structural signature ----
+ * A collapsible settings rail on the left; the dashboard (verdict line,
+ * four KPI tiles, cost chart, plan comparison) in the main column.
+ * Brand drifts for this tool (2): 10px corner radius on the dashboard
+ * surfaces, and tighter density (sp-3 gaps, compact tiles). */
+.dash-intro { margin-top: var(--sp-4); }
+.dash { display: grid; grid-template-columns: 21rem minmax(0, 1fr); gap: var(--sp-3); align-items: start; margin-top: var(--sp-3); }
+@media (max-width: 820px) { .dash { grid-template-columns: minmax(0, 1fr); } }
+
+.rail { border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.rail > summary { padding: var(--sp-3) var(--sp-4); list-style: none; display: flex; flex-wrap: wrap; gap: 0 var(--sp-2); align-items: baseline; cursor: pointer; font-weight: 600; }
+.rail > summary::-webkit-details-marker { display: none; }
+.rail > summary::after { content: "\2212"; color: var(--muted); font-weight: 400; font-size: 1.2rem; margin-left: auto; }
+.rail:not([open]) > summary::after { content: "+"; }
+.rail > summary .sub { color: var(--muted); font-weight: 400; font-size: var(--fs-small); }
+.rail-form { border: none; border-radius: 0; background: transparent; padding: 0 var(--sp-4) var(--sp-4); }
+.rail-form .fields { grid-template-columns: minmax(0, 1fr); }
+
+.dash-main { display: grid; gap: var(--sp-3); min-width: 0; }
+.dash-main .verdict { border-radius: 10px; }
+.dash-main .chart-panel { border-radius: 10px; }
+.dash-main .actions { margin-top: 0; }
+.dash-main .more { margin-top: 0; }
+
+/* KPI tiles: the tiles ARE the verdict */
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-3); margin: var(--sp-4) 0 var(--sp-1); }
+@media (max-width: 1080px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kpi-tile { background: var(--sunken); border: 1px solid var(--border); border-radius: 10px; padding: var(--sp-3); min-width: 0; }
+.kpi-tile .k-val { display: block; font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; white-space: nowrap; }
+.kpi-tile .k-val.range { font-size: 1.02rem; white-space: normal; }
+.kpi-tile .k-lbl { display: block; font-size: var(--fs-caption); color: var(--muted); margin-top: 2px; }

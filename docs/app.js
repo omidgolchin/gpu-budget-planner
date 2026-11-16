@@ -205,11 +205,19 @@
     $("verdict").className = "panel verdict " + rec.cls;
     last.title = title; last.body = body;
 
-    var k = [[F.money(W.median), "median bill", "median"], [F.money(W.es95), "average of the worst 5% of bills", "es"]];
-    if (v.budget !== null) k.push([F.pct(W.pOver, 0), "chance over budget"]);
-    else k.push([W.interruptions ? W.interruptions.toFixed(1) : "0", "spot interruptions per run"]);
-    k.push([F.pct(W.pMiss, 0), "chance of finishing late", "late"]);
-    $("kpis").innerHTML = k.map(function (x) { return '<div class="kpi"><span class="k-val">' + x[0] + '</span><span class="k-lbl">' + x[1] + (x[2] ? ' <button type="button" data-tip="' + x[2] + '"></button>' : "") + "</span></div>"; }).join("");
+    /* The dashboard tiles ARE the verdict: median bill, plausible range,
+     * chance over budget, chance of finishing late — all read off the
+     * winning plan's row (W). The expected shortfall and interruption
+     * count that used to sit here stay in the checks and Full numbers. */
+    var k = [
+      [F.money(W.median), "median bill", "median", ""],
+      [F.money(W.p5) + " – " + F.money(W.p95), "plausible range · middle 90% of bills", "range", " range"],
+      v.budget !== null
+        ? [F.pct(W.pOver, 0), "chance over budget", "budget", ""]
+        : ["—", "chance over budget · no budget set", "budget", ""],
+      [F.pct(W.pMiss, 0), "chance of finishing late", "late", ""]
+    ];
+    $("kpis").innerHTML = k.map(function (x) { return '<div class="kpi-tile"><span class="k-val' + x[3] + '">' + x[0] + '</span><span class="k-lbl">' + x[1] + ' <button type="button" data-tip="' + x[2] + '"></button>' + "</span></div>"; }).join("");
 
     var c = [];
     /* Deadline risk: a plan no pricier than the winner that is often late. */
@@ -387,6 +395,8 @@
     block: { t: "Bootstrap block length", d: "The simulation builds future spot prices by stitching together random stretches of real price history. This sets how long each stretch is. Longer stretches keep price runs (a week of high prices) intact; 28 days predicted held-out months best." },
     plans: { t: "Reading the plan chart", d: "Each row is a plan. The box covers the middle 50% of simulated bills, the whiskers the 5th to 95th percentile, and the diamond is the expected shortfall: the average of the worst 5% of bills. A plan whose box is low but whose diamond sits far right is cheap on average and risky in a bad month." },
     median: { t: "Median bill", d: "Half the simulated price paths give a lower bill, half a higher one. The typical case, not the worst." },
+    range: { t: "Plausible range", d: "The middle 90% of simulated bills for the recommended plan: on 5% of simulated price paths the bill comes in below this range, on 5% above it. The median sits inside it." },
+    budget: { t: "Chance over budget", d: "The share of simulated price paths in which the recommended plan's bill goes over the budget you entered. If you enter no budget, there is nothing to go over, and the tile says so." },
     es: { t: "Expected shortfall (worst 5%)", d: "The average bill across the worst 5% of simulated outcomes. Budgeting to this, rather than the 95th percentile alone, accounts for how bad the tail can get (Acerbi and Tasche, 2002)." },
     late: { t: "Chance of finishing late", d: "Share of simulated runs in which interruptions and redone work push the job past the deadline. Plans that miss in more than 5% of runs are not recommended." }
   });

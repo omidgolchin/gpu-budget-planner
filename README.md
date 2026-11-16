@@ -2,9 +2,9 @@
 
 For ML engineers and lab managers planning a training run: enter the GPU-hours you need and your deadline, and get a concrete buying plan (reserve, pay on demand, use spot, or a mix) with the median bill, the plausible range, and the chances of going over budget or finishing late.
 
-![The planner on four jobs (ablation runs, a tight deadline, a fixed budget, a big lockstep pretrain) and the explanation of expected shortfall](docs/hero.gif)
+![The planner as a dashboard: the verdict and KPI tiles for the default job, an example whose budget cannot be met, and the settings rail open](docs/hero.gif)
 
-![The planner on a desktop: the three-step guide, the job inputs with a hint under each, and the recommendation](docs/screenshots/desktop.png)
+![The planner on a desktop: the settings rail on the left, and the dashboard — the verdict line over four KPI tiles (median bill, plausible range, chance over budget, chance of finishing late), with the cost chart below](docs/screenshots/desktop.png)
 
 **Use it:** https://omidgolchin.github.io/gpu-budget-planner/ (runs in your browser; nothing you type leaves it)
 
@@ -17,7 +17,7 @@ For ML engineers and lab managers planning a training run: enter the GPU-hours y
 - A reservation is a commitment: whole GPUs for whole terms, paid whether or not the job still needs them, unless you say the GPUs go on to other work after the deadline.
 - Prices are prefilled from current market data (GetDeploying medians) and the spot history is real (AWS spot archive); every price is editable, because your quote beats a median.
 - The "Fill from my plan" assist reads a pasted plan or budget note and fills the form with your own API key (or a copy-prompt fallback). Every filled value shows the phrase it came from; the model never computes the verdict.
-- **Help where you need it.** The page opens with three steps saying what to enter and what you get; every input has a line under it saying what the number is, why it matters and where to find it; and every technical term in the inputs and results has a **?** that opens a plain-language explanation.
+- **Help where you need it.** The page opens with one line saying what to enter and what you get; your settings sit in a rail on the left (above the dashboard on a phone), every input has a line under it saying what the number is, why it matters and where to find it, and every technical term in the inputs and results has a **?** that opens a plain-language explanation.
 
 ## Built-in checks
 
