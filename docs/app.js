@@ -75,10 +75,13 @@
     $("resHint").textContent = "Prefilled: median listing for the term above, same week. Changing the GPU or term refills both prices.";
     $("gdWeek").textContent = fmtDate(DATA.gdWeek);
   }
+  var q0 = new URLSearchParams(location.search);
+  if (!IDS.some(function (k) { return q0.has(k); })) Tool.exampleWatch($("f-job"), "<b>" + EXAMPLES[0].label + "</b>, with the prefilled median prices. Type your own job over it; the plan updates as you type.");
   EXAMPLES.forEach(function (ex, i) { var o = document.createElement("option"); o.value = i; o.textContent = ex.label; $("example").appendChild(o); });
   $("example").addEventListener("change", function () {
     if (this.value === "") return;
-    var v = EXAMPLES[+this.value].v; this.value = "";
+    var ex = EXAMPLES[+this.value], v = ex.v; this.value = "";
+    Tool.exampleWatch($("f-job"), "<b>" + ex.label + "</b>. Type your own job over it; the plan updates as you type.");
     document.querySelectorAll(".field.filled").forEach(function (f) { f.classList.remove("filled"); });
     $("gpu").value = v.gpu; $("term").value = v.term; fillPrices(true);
     $("hours").value = v.hours; $("weeks").value = v.weeks; $("budget").value = v.budget; $("ckpt").value = v.ckpt;
@@ -125,11 +128,11 @@
     };
     var ok = true;
     function need(id, cond, msg) { fieldError(id, cond ? "" : msg); if (!cond) ok = false; }
-    need("hours", v.hours > 0 && v.hours <= 1000000, "Between 1 and 1,000,000 GPU-hours.");
+    need("hours", v.hours > 0 && v.hours <= 1000000, "Enter the total GPU-hours, from 1 to 1,000,000.");
     need("weeks", v.weeks >= 1 && v.weeks <= 52 && Math.floor(v.weeks) === v.weeks, "A whole number of weeks, 1 to 52.");
-    need("budget", v.budget === null || v.budget > 0, "Above 0, or empty for no limit.");
-    need("onDemand", v.onDemand === null || (v.onDemand > 0 && v.onDemand <= 1000), "Above 0, or empty to use the prefill.");
-    need("reserved", v.reserved === null || (v.reserved > 0 && v.reserved <= 1000), "Above 0, or empty to use the prefill.");
+    need("budget", v.budget === null || v.budget > 0, "Enter a budget in dollars above 0, or leave it empty for no limit.");
+    need("onDemand", v.onDemand === null || (v.onDemand > 0 && v.onDemand <= 1000), "Enter a price per GPU-hour above 0 (up to $1,000), or leave it empty to use the prefilled price.");
+    need("reserved", v.reserved === null || (v.reserved > 0 && v.reserved <= 1000), "Enter a price per GPU-hour above 0 (up to $1,000), or leave it empty to use the prefilled price.");
     need("cap", v.cap === null || v.cap > 0, "Above 0, or empty for the on-demand price.");
     return ok ? v : null;
   }
@@ -238,7 +241,8 @@
     var gpus = v.hours / (v.weeks * 7 * 24), nodes = gpus / 8;
     var fleet = "Your job keeps about " + (gpus >= 10 ? F.int(gpus) : F.num(gpus, 1)) + " GPUs busy (" +
       (nodes < 1 ? "part of one 8-GPU node" : (nodes >= 10 ? F.int(nodes) : F.num(nodes, 1)) + " nodes of 8") + "). ";
-    var reclaimTxt = $("reclaim").selectedOptions[0].textContent.toLowerCase();
+    var reclaimTxt = $("reclaim").selectedOptions[0].textContent.replace(/\s*\(.*?\)\s*/g, "").toLowerCase();
+    var guessTxt = $("reclaim").value === DEFAULTS.reclaim ? " That reclaim rate is the tool's default guess, not a measurement: try once a day too and see whether the recommendation changes." : "";
     var lostW = W.lostHours, intsW = W.interruptions;
     var redone = intsW >= 0.05 ? " The recommended plan sees about " + F.num(intsW, intsW >= 10 ? 0 : 1) + " interruptions per run and redoes about " +
       F.int(lostW) + (Math.round(lostW) === 1 ? " GPU-hour" : " GPU-hours") + (lostW > 0 ? " (" + F.pct(lostW / v.hours, lostW / v.hours < 0.01 ? 1 : 0) + " of the job)" : "") + "." : "";
@@ -251,7 +255,7 @@
         " Hourly checkpoints would put this plan's median at " + F.money(byId(last.out1)[rec.id].median) + " instead of " + F.money(W.median) + "."]);
     } else if (v.reclaim > 0) {
       c.push(["ok", "CHECKPOINTS", "Checkpoint interval", fleet + "With nodes reclaimed " + reclaimTxt + ", a job this size loses little to interruptions at " + v.ckpt + "-hour checkpoints." + redone +
-        " The interval starts to matter as the fleet grows: every extra node is another way for the whole job to stop."]);
+        " The interval starts to matter as the fleet grows: every extra node is another way for the whole job to stop." + guessTxt]);
     } else {
       c.push(["info", "CHECKPOINTS", "Checkpoint interval", "Only price-cap interruptions are modeled, and spot prices rarely reach your cap. Spot nodes are reclaimed for capacity whatever the price, so set how often that happens to price it in."]);
     }
@@ -377,7 +381,7 @@
     ckpt: { t: "Checkpoints", d: "A checkpoint saves the training state so a stopped job can resume. Spot GPUs can be taken back at short notice; everything since the last checkpoint is lost and redone. Frequent checkpoints make spot cheaper in practice." },
     term: { t: "Reservation term", d: "Reserved capacity is bought for a fixed term at a discount. You pay for every hour of the term, used or not, so a long term only pays off if the GPUs stay busy." },
     after: { t: "Reserved GPUs after the deadline", d: "If the reservation outlasts the job, the remaining hours are either wasted (you still pay) or used by other work. Only count them as used if your team will really use them." },
-    reclaim: { t: "Spot reclaims", d: "How often the provider takes spot capacity back. Each reclaim costs the work since the last checkpoint plus restart time. The simulation draws reclaims at random at this rate (a Poisson process) for each node." },
+    reclaim: { t: "Spot reclaims", d: "How often the provider takes spot capacity back. Each reclaim costs the work since the last checkpoint plus restart time. The simulation draws reclaims at random at this rate (a Poisson process) for each node. The default, once a week per node, is a guess for when you have no logs: run once a day as well, and if the recommendation changes, the rate matters for your job. AWS's Spot Instance Advisor gives a past-month interruption band per instance type and region; your own logs beat any guess." },
     paths: { t: "Simulated price paths", d: "Future spot prices are unknown, so the tool builds many plausible price paths by resampling blocks of real price history (a block bootstrap) and prices every plan on each one." },
     lockstep: { t: "Lockstep training", d: "Distributed training where every node advances together, step by step. If one node is taken away, the whole job stops and resumes from the last checkpoint, so one reclaim costs everyone's work since then, not just that node's." },
     block: { t: "Bootstrap block length", d: "The simulation builds future spot prices by stitching together random stretches of real price history. This sets how long each stretch is. Longer stretches keep price runs (a week of high prices) intact; 28 days predicted held-out months best." },
