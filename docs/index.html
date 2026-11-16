@@ -25,6 +25,14 @@
     </div>
     <h1>GPU Budget Planner</h1>
     <p class="kit-tagline">You need this many GPU-hours by this deadline. Should you reserve, pay on demand, use spot, or mix, and how sure can you be of the bill?</p>
+    <div class="start-here">
+      <p class="sh-q"><b>It answers:</b> how to buy the GPU-hours a job needs by its deadline (reserve, pay on demand, use spot, or mix) and how sure you can be of the bill.</p>
+      <ol>
+        <li><b>Pick the situation closest to yours</b> in "Start from a common situation", or keep the ablation runs already filled in.</li>
+        <li><b>Describe your job</b> in the panel on the left: the GPU, the hours it needs, the deadline in weeks, your budget and how often it checkpoints. Prices are filled in from current market medians; replace them with your own quotes if you have them.</li>
+        <li><b>Read the recommendation</b> and the chart of what each plan costs. Before you rely on it, check <a href="#fit" class="open-details">when to use this tool, and when not</a>.</li>
+      </ol>
+    </div>
   </header>
 
   <p class="page-sub dash-intro">Set the job in the rail — GPU, GPU-hours, deadline, and your prices if you have them — and the dashboard prices eight plans on the same simulated spot prices. <i>Fill from my plan</i> (in the rail) reads a pasted training plan or budget note; <i>Copy link</i> saves your inputs.</p>
@@ -35,7 +43,7 @@
       <form class="panel rail-form" id="f-job" novalidate onsubmit="return false">
         <div class="panel-head">
           <h2>Your job</h2>
-          <select class="example" id="example" aria-label="Load an example"><option value="">Load example…</option></select>
+          <select class="example" id="example" aria-label="Start from a common situation"><option value="">Start from a common situation…</option></select>
         </div>
         <div class="fields">
           <div class="field"><label for="gpu">GPU type</label>
@@ -156,6 +164,35 @@ expected shortfall = average of the bills at or above the 95th percentile</div>
       </details>
     </div>
   </div>
+
+  <details class="more guide" id="fit">
+    <summary>When to use it, and when not <span class="sub">assumptions, limits, alternatives</span></summary>
+    <div class="more-body small">
+      <p><b>Use it</b> to budget a training or fine-tuning job of known size with a deadline, to check a reservation quote against spot and on-demand, or to see how checkpointing changes what spot really costs.</p>
+      <p><b>It assumes</b> the following. Each line says what happens to the answer when your case breaks the assumption.</p>
+      <table class="fit-table">
+        <thead><tr><th>Assumption</th><th>If yours differs</th></tr></thead>
+        <tbody>
+          <tr><td>The job needs a known number of GPU-hours, and any GPU of the chosen type will do.</td><td>If the size is uncertain, run the tool at your low and high estimates; the plans can change order between them.</td></tr>
+          <tr><td>Spot prices move the way AWS us-east-1 prices moved from May to November 2024, scaled to today's median level.</td><td>Other clouds and regions have different spot markets. The interval check on the page shows how well the simulated range held on held-out months: well for the H100 (92% of days), poorly for the A100 (72%) and V100 (48%).</td></tr>
+          <tr><td>Spot nodes are reclaimed at a steady rate you choose, independent of price.</td><td>If reclaims come in bursts (a capacity crunch), spot plans finish late more often than shown. Choose a higher rate to stress-test.</td></tr>
+          <tr><td>A training job runs its nodes in lockstep and loses half a checkpoint interval of the whole fleet's work at each reclaim.</td><td>Jobs that can lose a node and keep going (many independent runs, for example) lose far less; the tool overstates their spot risk.</td></tr>
+          <tr><td>A reservation is paid for whole GPUs over whole terms, unless you say the GPUs go on to other work.</td><td>If your provider lets you cancel or resell, the reservation costs less than shown.</td></tr>
+          <tr><td>Prices do not change with the amount you buy.</td><td>Volume discounts or negotiated rates belong in the price fields.</td></tr>
+        </tbody>
+      </table>
+      <p><b>Do not use it</b> for serving models around the clock (that is a capacity and latency question, not a deadline), for buying your own hardware, or for jobs whose GPU type or provider is not yet chosen (compare the price quotes first).</p>
+    </div>
+  </details>
+
+  <details class="more guide" id="origin">
+    <summary>Where this tool comes from <span class="sub">the problem and data it was built on, and how it was generalised</span></summary>
+    <div class="more-body small">
+      <p>This tool did not come out of a separate study. It was built around one decision that research groups and small ML teams face each time they plan a training run, on two public datasets: daily spot prices for H100, A100 and V100 instances in AWS us-east-1, May to November 2024 (<a href="https://doi.org/10.5281/zenodo.14254112">Pauley, 2024</a>), and current on-demand, spot and reserved medians across providers (<a href="https://getdeploying.com/gpus">GetDeploying</a>).</p>
+      <p><b>What shaped it.</b> Checking the first version against how spot actually works changed two things. Since late 2017 AWS reclaims spot nodes for capacity, not because the price crosses a bid, so interruptions are now a rate per node rather than a price event. And a reservation is a commitment: charging reserved GPUs only for the hours used had made a 12-month reservation look like the cheapest way to run a 6-week job.</p>
+      <p><b>How it was generalised.</b> The price paths are bootstrapped from the archive in 28-day blocks, so price runs persist, and the archive's 2024 level is scaled to today's median. Every price field is editable, so a quote from your own provider replaces the median, and the job size, deadline, budget, checkpoint interval and reclaim rate are your inputs.</p>
+    </div>
+  </details>
 
   <footer class="kit-footer">
     <p class="kit-siblings"></p>

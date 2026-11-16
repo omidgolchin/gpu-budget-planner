@@ -9,3 +9,4 @@ Total: **$0**.
   were made while building this tool.
 - 2026-11-16: structural-variation restructure (dashboard layout,
   settings rail, KPI-tile verdict) — local compute only, $0.00 API spend.
+- 2026-11-16: guide sections (start here, situations, when to use, where it comes from) — $0.00 API spend; all work local.

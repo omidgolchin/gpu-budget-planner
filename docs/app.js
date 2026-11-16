@@ -3,21 +3,26 @@
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
+  function openDetails(id) { var d = document.getElementById(id); if (d && d.tagName === "DETAILS") { d.open = true; d.scrollIntoView({ block: "start" }); var su = d.querySelector("summary"); if (su) su.focus(); } }
+  document.querySelectorAll("a.open-details").forEach(function (a) { a.addEventListener("click", function (e) { e.preventDefault(); openDetails(a.getAttribute("href").slice(1)); }); });
+  if (location.hash === "#fit" || location.hash === "#origin") openDetails(location.hash.slice(1));
   var F = Tool.fmt;
   var DATA = window.GPU_PRICES || null;
   var DEFAULTS = {
     gpu: "h100", hours: 2000, weeks: 6, budget: 9000, ckpt: "2", term: "1", reclaim: "0.142857", after: "idle",
     onDemand: "", reserved: "", cap: "", block: "28", paths: "400"
   };
+  /* Common situations. Job sizes are illustrative; prices come from the data. To add one, append
+     {label, why, v} with the job fields to set. */
   var EXAMPLES = [
-    { label: "Ablation runs: 2,000 H100-hours in 6 weeks", v: { gpu: "h100", hours: 2000, weeks: 6, budget: 9000, ckpt: "2", term: "1" } },
-    { label: "Workshop deadline: 5,000 A100-hours in 2 weeks", v: { gpu: "a100", hours: 5000, weeks: 2, budget: "", ckpt: "4", term: "1" } },
-    { label: "Tight budget: 4,000 H100-hours, $10,000", v: { gpu: "h100", hours: 4000, weeks: 8, budget: 10000, ckpt: "2", term: "1" } },
-    { label: "Patient V100 retrain: 800 hours, 12 weeks", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "3" } },
-    { label: "V100 on a 2-year reservation quote", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "24" } },
-    { label: "Same quote, GPUs reused after the job", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "24", after: "reuse" } },
-    { label: "Big pretrain: 8,000 H100-hours, 12 weeks", v: { gpu: "h100", hours: 8000, weeks: 12, budget: 30000, ckpt: "4", term: "3" } },
-    { label: "Lockstep pretrain: 60,000 H100-hours in 4 weeks", v: { gpu: "h100", hours: 60000, weeks: 4, budget: 220000, ckpt: "8", term: "1", reclaim: "1" } }
+    { label: "Ablation runs: 2,000 H100-hours in 6 weeks", why: "A modest job with weeks of slack. Spot with an on-demand fallback in the last week costs about half of reserving.", v: { gpu: "h100", hours: 2000, weeks: 6, budget: 9000, ckpt: "2", term: "1" } },
+    { label: "Workshop deadline: 5,000 A100-hours in 2 weeks", why: "A hard deadline two weeks out. The fallback week covers the risk; a reservation would leave over half its paid hours idle after the job.", v: { gpu: "a100", hours: 5000, weeks: 2, budget: "", ckpt: "4", term: "1" } },
+    { label: "Tight budget: 4,000 H100-hours, $10,000", why: "The budget is below the cheapest plan that always finishes on time. The verdict says so instead of recommending a gamble.", v: { gpu: "h100", hours: 4000, weeks: 8, budget: 10000, ckpt: "2", term: "1" } },
+    { label: "Patient V100 retrain: 800 hours, 12 weeks", why: "A small, patient job on an older GPU: spot and a short reservation land close.", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "3" } },
+    { label: "V100 on a 2-year reservation quote", why: "A 2-year reservation for a 12-week job: almost all the paid hours sit idle after the job, so the quote's low hourly price is misleading.", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "24" } },
+    { label: "Same quote, GPUs reused after the job", why: "The same quote when the reserved GPUs go on to other work: only this job's hours count, and reserving becomes the cheapest plan.", v: { gpu: "v100", hours: 800, weeks: 12, budget: "", ckpt: "2", term: "24", after: "reuse" } },
+    { label: "Big pretrain: 8,000 H100-hours, 12 weeks", why: "A larger job with a budget and a 3-month reservation option.", v: { gpu: "h100", hours: 8000, weeks: 12, budget: 30000, ckpt: "4", term: "3" } },
+    { label: "Lockstep pretrain: 60,000 H100-hours in 4 weeks", why: "A big fleet that stops whenever any node is reclaimed (about once a day per node), with 8-hour checkpoints. Spot loses so much work that it cannot finish on time; reserving wins.", v: { gpu: "h100", hours: 60000, weeks: 4, budget: 220000, ckpt: "8", term: "1", reclaim: "1" } }
   ];
   var IDS = ["gpu", "hours", "weeks", "budget", "ckpt", "term", "after", "reclaim", "onDemand", "reserved", "cap", "block", "paths"];
   var TITLES = {
@@ -81,7 +86,7 @@
   $("example").addEventListener("change", function () {
     if (this.value === "") return;
     var ex = EXAMPLES[+this.value], v = ex.v; this.value = "";
-    Tool.exampleWatch($("f-job"), "<b>" + ex.label + "</b>. Type your own job over it; the plan updates as you type.");
+    Tool.exampleWatch($("f-job"), "<b>" + ex.label + ".</b> " + (ex.why || "") + " Type your own job over it; the plan updates as you type.");
     document.querySelectorAll(".field.filled").forEach(function (f) { f.classList.remove("filled"); });
     $("gpu").value = v.gpu; $("term").value = v.term; fillPrices(true);
     $("hours").value = v.hours; $("weeks").value = v.weeks; $("budget").value = v.budget; $("ckpt").value = v.ckpt;

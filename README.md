@@ -17,6 +17,7 @@ For ML engineers and lab managers planning a training run: enter the GPU-hours y
 - A reservation is a commitment: whole GPUs for whole terms, paid whether or not the job still needs them, unless you say the GPUs go on to other work after the deadline.
 - Prices are prefilled from current market data (GetDeploying medians) and the spot history is real (AWS spot archive); every price is editable, because your quote beats a median.
 - The "Fill from my plan" assist reads a pasted plan or budget note and fills the form with your own API key (or a copy-prompt fallback). Every filled value shows the phrase it came from; the model never computes the verdict.
+- **Start here.** The page opens with the question it answers and three steps; a list of common situations fills the form; and a section says when to use the tool and when not.
 - **Help where you need it.** The page opens with one line saying what to enter and what you get; your settings sit in a rail on the left (above the dashboard on a phone), every input has a line under it saying what the number is, why it matters and where to find it, and every technical term in the inputs and results has a **?** that opens a plain-language explanation.
 
 ## Built-in checks
@@ -54,6 +55,46 @@ For ML engineers and lab managers planning a training run: enter the GPU-hours y
 - A reservation's price per GPU-hour is not its cost. Two GPUs on a 12-month term for a 6-week job leave nine tenths of the paid hours idle; the per-hour quote hides that, and so did my first version.
 - A percentile is not a budget number. The average of the worst 5% of bills sits above the 95th percentile on every plan here, and it is the number a budget actually has to survive.
 - Reserving is not automatically cheaper than on-demand either: for the V100, the 12-month reserved listings in the data cost more per GPU-hour than the on-demand median, because the two are sold by different, thinner markets.
+
+## Common situations
+
+The form opens with "Start from a common situation". Each entry fills the form and says what it shows:
+
+| Situation | What it shows |
+|---|---|
+| Ablation runs: 2,000 H100-hours in 6 weeks | Weeks of slack: spot with a fallback costs about half of reserving. |
+| Workshop deadline: 5,000 A100-hours in 2 weeks | A hard deadline; a reservation would sit idle after the job. |
+| Tight budget | The budget is below any plan that always finishes on time, and the verdict says so. |
+| Patient V100 retrain | A small job on an older GPU: spot and a short reservation land close. |
+| V100 on a 2-year reservation quote | Almost all the paid hours idle after a 12-week job. |
+| Same quote, GPUs reused after the job | Only this job's hours count, and reserving becomes the cheapest plan. |
+| Big pretrain: 8,000 H100-hours, 12 weeks | A larger job with a budget and a 3-month reservation option. |
+| Lockstep pretrain: 60,000 H100-hours in 4 weeks | Daily reclaims on a lockstep fleet: spot cannot finish on time. |
+
+Job sizes are illustrative; prices come from the data. To add a situation, append an entry `{label, why, v}` to `EXAMPLES` in `docs/app.js`.
+
+## When to use it, and when not
+
+Use it to budget a training or fine-tuning job of known size with a deadline, to check a reservation quote against spot and on-demand, or to see how checkpointing changes what spot really costs.
+
+| It assumes | If yours differs |
+|---|---|
+| The job needs a known number of GPU-hours, and any GPU of the chosen type will do. | If the size is uncertain, run the tool at your low and high estimates; the plans can change order between them. |
+| Spot prices move the way AWS us-east-1 prices moved from May to November 2024, scaled to today's median level. | Other clouds and regions have different spot markets. The interval check on the page shows how well the simulated range held on held-out months: well for the H100 (92% of days), poorly for the A100 (72%) and V100 (48%). |
+| Spot nodes are reclaimed at a steady rate you choose, independent of price. | If reclaims come in bursts (a capacity crunch), spot plans finish late more often than shown. Choose a higher rate to stress-test. |
+| A training job runs its nodes in lockstep and loses half a checkpoint interval of the whole fleet's work at each reclaim. | Jobs that can lose a node and keep going (many independent runs, for example) lose far less; the tool overstates their spot risk. |
+| A reservation is paid for whole GPUs over whole terms, unless you say the GPUs go on to other work. | If your provider lets you cancel or resell, the reservation costs less than shown. |
+| Prices do not change with the amount you buy. | Volume discounts or negotiated rates belong in the price fields. |
+
+Do not use it for serving models around the clock (that is a capacity and latency question, not a deadline), for buying your own hardware, or for jobs whose GPU type or provider is not yet chosen (compare the price quotes first).
+
+## Where it comes from, and how it was generalised
+
+This tool did not come out of a separate study. It was built around one decision that research groups and small ML teams face each time they plan a training run, on two public datasets: daily spot prices for H100, A100 and V100 instances in AWS us-east-1, May to November 2024 ([Pauley, 2024](https://doi.org/10.5281/zenodo.14254112)), and current on-demand, spot and reserved medians across providers ([GetDeploying](https://getdeploying.com/gpus)).
+
+**What shaped it.** Checking the first version against how spot actually works changed two things. Since late 2017 AWS reclaims spot nodes for capacity, not because the price crosses a bid, so interruptions are now a rate per node rather than a price event. And a reservation is a commitment: charging reserved GPUs only for the hours used had made a 12-month reservation look like the cheapest way to run a 6-week job.
+
+**How it was generalised.** The price paths are bootstrapped from the archive in 28-day blocks, so price runs persist, and the archive's 2024 level is scaled to today's median. Every price field is editable, so a quote from your own provider replaces the median, and the job size, deadline, budget, checkpoint interval and reclaim rate are your inputs.
 
 ## Research notes
 
