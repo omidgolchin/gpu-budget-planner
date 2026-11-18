@@ -113,7 +113,7 @@ Revisions after review
   size, not a forecast. When the winner flips, the message states how
   often a move that size actually happens in the selected GPU's
   shipped series, computed at page load — not a claim about a
-  "normal month", which the first draft asserted and Claude's
+  "normal month", which the first draft asserted and the
   2026-11-18 review removed: the frequency differs sharply by GPU.
   Definition: 30-day windows starting on every day of the shipped
   214-day daily spot series (184 windows), the move is
@@ -121,7 +121,7 @@ Revisions after review
   counts windows with |move| ≥ 20%. On the shipped series that is
   H100 9%, A100 63%, V100 28% (pinned in tests/test_engine.py and
   mirrored in both engines as spot_move_share / spotMoveShare).
-- **summarize() worst-set guard (2026-11-18, Claude review).** When a
+- **summarize() worst-set guard (2026-11-18 review).** When a
   strategy's simulated bills are all the same number — a constant
   spot series is the clean case — the interpolated 95th percentile
   can land 1 ulp above the maximum, leaving the worst-5% set empty:

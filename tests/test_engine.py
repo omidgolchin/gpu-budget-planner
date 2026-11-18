@@ -257,7 +257,7 @@ def test_spot_move_share_pins_the_shipped_series():
     # The flip message states this share for the selected GPU, so pin
     # it per GPU: 30-day windows starting every day over the shipped
     # 214-day series (184 windows), |move| >= 20%. Shares are the
-    # whole-percent figures the page prints (Claude's counts from the
+    # whole-percent figures the page prints (the counts from the
     # 2026-11-18 review: H100 9%, A100 63%, V100 28%).
     expected = {"h100": 9, "a100": 63, "v100": 28}
     for key, pct in expected.items():
