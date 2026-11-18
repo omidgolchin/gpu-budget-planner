@@ -3,6 +3,10 @@
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
+  /* Live regions (the verdict title) are written only when their text
+   * changes, so a screen reader does not announce an unchanged verdict
+   * again after every pause in typing. */
+  var setLive = function (el, s) { s = String(s); if (el.textContent !== s) el.textContent = s; };
   function openDetails(id) { var d = document.getElementById(id); if (d && d.tagName === "DETAILS") { d.open = true; d.scrollIntoView({ block: "start" }); var su = d.querySelector("summary"); if (su) su.focus(); } }
   document.querySelectorAll("a.open-details").forEach(function (a) { a.addEventListener("click", function (e) { e.preventDefault(); openDetails(a.getAttribute("href").slice(1)); }); });
   if (location.hash === "#fit" || location.hash === "#origin") openDetails(location.hash.slice(1));
@@ -145,10 +149,10 @@
   function run() {
     if (DATA) { fillPrices(false); updateGpuHint(); }
     var urlState = {}; IDS.forEach(function (k) { urlState[k] = $(k).value; }); Tool.writeParams(urlState);
-    if (!DATA) { $("vTitle").textContent = "Price data did not load."; return; }
+    if (!DATA) { setLive($("vTitle"), "Price data did not load."); return; }
     var v = readInputs();
     if (!v) {
-      $("vTitle").textContent = "Check the highlighted inputs"; $("vBody").textContent = "";
+      setLive($("vTitle"), "Check the highlighted inputs"); $("vBody").textContent = "";
       $("kpis").innerHTML = ""; $("checks").innerHTML = "";
       $("verdict").className = "panel verdict v-neutral";
       $("boxChart").innerHTML = ""; $("boxCaption").textContent = ""; last = null; return;
@@ -207,7 +211,7 @@
       if (W.pMiss > 0) body += " This plan itself finishes late in " + F.pct(W.pMiss, 0) + " of runs.";
     }
     body += " Reservations are priced " + (v.after === "reuse" ? "on this job's hours only, because you said the reserved GPUs go to other work after the deadline." : "for every hour of the " + v.term + "-month term, because you said the reserved GPUs sit idle after the deadline.");
-    $("vTitle").textContent = title; $("vBody").textContent = body;
+    setLive($("vTitle"), title); $("vBody").textContent = body;
     $("verdict").className = "panel verdict " + rec.cls;
     last.title = title; last.body = body;
 
