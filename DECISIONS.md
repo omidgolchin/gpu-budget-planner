@@ -99,3 +99,25 @@ Revisions after review
   because the difference is the lesson.
 - **Near ties go to the on-time plan.** Medians within 0.5% are a tie,
   decided by lower miss rate, then over-budget rate, then median.
+- **Spot price move check (2026-11-18, PM review GBP-1).** The verdict
+  is priced off one anchored spot level, and that level moves: Lambda
+  raised its H100 list price about 14–15% in November 2026 while the
+  tool's prefills sat at the week of November 9. A check in the verdict
+  strip now re-runs every plan with the whole spot series scaled by
+  0.8 and by 1.2 — one constant, so the log returns and dynamics are
+  unchanged, the same trick as the level anchoring (#3) — holding the
+  reserved and on-demand prices and the cap at the user's values. It
+  states the winner's median at each moved level when the winner
+  holds, and names the plan it changes to when it does not. The ±20%
+  size brackets the November list-price rise; it is a stated stress
+  size, not a forecast. When the winner flips, the message states how
+  often a move that size actually happens in the selected GPU's
+  shipped series, computed at page load — not a claim about a
+  "normal month", which the first draft asserted and Claude's
+  2026-11-18 review removed: the frequency differs sharply by GPU.
+  Definition: 30-day windows starting on every day of the shipped
+  214-day daily spot series (184 windows), the move is
+  (price 30 days later − price today) / price today, and the share
+  counts windows with |move| ≥ 20%. On the shipped series that is
+  H100 9%, A100 63%, V100 28% (pinned in tests/test_engine.py and
+  mirrored in both engines as spot_move_share / spotMoveShare).

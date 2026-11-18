@@ -161,7 +161,8 @@
     var out = GpuPlan.plan(g.spot, v.hours, v.weeks, v.budget, v.ckpt, pRes, pOd, opt);
     var out1 = null;
     if (v.ckpt !== 1) out1 = GpuPlan.plan(g.spot, v.hours, v.weeks, v.budget, 1, pRes, pOd, opt);
-    last = { v: v, g: g, out: out, out1: out1, pOd: pOd, pRes: pRes, cap: cap };
+    var sens = GpuPlan.priceSensitivity(g.spot, v.hours, v.weeks, v.budget, v.ckpt, pRes, pOd, opt);
+    last = { v: v, g: g, out: out, out1: out1, sens: sens, pOd: pOd, pRes: pRes, cap: cap };
     render();
   }
 
@@ -249,6 +250,20 @@
     } else if (v.budget !== null) {
       c.push([W.pOver <= 0.05 ? "ok" : W.pOver <= 0.2 ? "info" : "warn", "BUDGET", "Budget",
         "The recommended plan goes over " + F.money(v.budget) + " in " + F.pct(W.pOver, 0) + " of simulated runs."]);
+    }
+    /* Spot price move: does the winner survive the spot level ±20%? */
+    var sd = last.sens.down, su = last.sens.up;
+    if (sd.id === rec.id && su.id === rec.id) {
+      c.push(["ok", "PRICE HOLDS", "Spot price move", "This recommendation does not depend on today's spot level: " +
+        "the same plan wins with spot prices 20% lower (median " + F.money(sd.median) + ") " +
+        "and with spot prices 20% higher (median " + F.money(su.median) + ")."]);
+    } else {
+      var flips = [];
+      if (sd.id !== rec.id) flips.push("spot prices 20% lower would make " + stratName(out, sd.id).toLowerCase() + " the winner (median " + F.money(sd.median) + ")");
+      if (su.id !== rec.id) flips.push("spot prices 20% higher would make " + stratName(out, su.id).toLowerCase() + " the winner (median " + F.money(su.median) + ")");
+      var sharePct = Math.round(GpuPlan.spotMoveShare(last.g.spot) * 100);
+      c.push(["warn", "PRICE MOVE", "Spot price move", "This recommendation is priced off today's spot level, and the answer is close: " +
+        flips.join("; ") + ". In the spot data for this GPU, " + sharePct + "% of 30-day periods moved by 20% or more, so check a fresh spot quote before you commit."]);
     }
     /* Checkpoints and reclaims, against the hourly-checkpoint counterfactual. */
     var gpus = v.hours / (v.weeks * 7 * 24), nodes = gpus / 8;

@@ -22,14 +22,18 @@ const job = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const rng = G.mulberry32(42);
 const first5 = Array.from({length: 5}, () => rng());
 const cases = job.cases.map(c => {
-  const out = G.plan(c.spot, c.hours, c.weeks, c.budget, c.ckpt, c.pRes, c.pOd,
-                     {paths: c.paths, seed: c.seed, reclaim: c.reclaim || 0,
-                      termHours: c.termHours == null ? null : c.termHours});
-  return { first5, strategies: out.strategies.map(s => ({
+  const opts = {paths: c.paths, seed: c.seed, reclaim: c.reclaim || 0,
+                termHours: c.termHours == null ? null : c.termHours};
+  const out = G.plan(c.spot, c.hours, c.weeks, c.budget, c.ckpt, c.pRes, c.pOd, opts);
+  const sens = G.priceSensitivity(c.spot, c.hours, c.weeks, c.budget, c.ckpt,
+                                  c.pRes, c.pOd, opts);
+  const moveShare = G.spotMoveShare(c.spot);
+  return { first5, moveShare, strategies: out.strategies.map(s => ({
       id: s.id, median: s.median, p95: s.p95, es95: s.es95,
       pMiss: s.pMiss, pOver: s.pOver, lostHours: s.lostHours })),
     recommendation: out.recommendation,
-    iidSpotMedian: out.iidSpotMedian, blockSpotMedian: out.blockSpotMedian };
+    iidSpotMedian: out.iidSpotMedian, blockSpotMedian: out.blockSpotMedian,
+    sens: sens };
 });
 console.log(JSON.stringify(cases));
 """
@@ -78,9 +82,21 @@ def test_plan_agrees_on_four_cases():
                          paths_n=c["paths"], seed=c["seed"],
                          reclaim=c.get("reclaim", 0.0),
                          term_hours=c.get("termHours"))
+        assert engine.spot_move_share(g["spot"]) == jout["moveShare"]
         assert py["recommendation"]["id"] == jout["recommendation"]["id"]
         assert py["recommendation"]["cls"] == jout["recommendation"]["cls"]
         assert py["iid_spot_median"] == pytest.approx(jout["iidSpotMedian"], rel=1e-9)
+        pys = engine.price_sensitivity(g["spot"], c["hours"], c["weeks"],
+                                       c["budget"], c["ckpt"],
+                                       g["reservedByTerm"]["12"], g["onDemand"],
+                                       paths_n=c["paths"], seed=c["seed"],
+                                       reclaim=c.get("reclaim", 0.0),
+                                       term_hours=c.get("termHours"))
+        for side in ("down", "up"):
+            assert pys[side]["id"] == jout["sens"][side]["id"]
+            assert pys[side]["cls"] == jout["sens"][side]["cls"]
+            assert pys[side]["median"] == pytest.approx(
+                jout["sens"][side]["median"], rel=1e-9)
         pstats = {s["id"]: s for s in py["strategies"]}
         for js_s in jout["strategies"]:
             ps = pstats[js_s["id"]]

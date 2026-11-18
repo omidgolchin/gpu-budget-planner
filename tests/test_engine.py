@@ -218,3 +218,53 @@ def test_reservation_is_a_commitment():
     s = {x["id"]: x for x in out["strategies"]}
     assert s["reserved"]["median"] == 2 * 8760 * 3.0
     assert out["recommendation"]["id"] != "reserved"
+
+
+def test_price_sensitivity_holds_when_spot_wins_by_a_lot():
+    # Constant spot at $1 against $3 reserved and $4 on-demand: all-spot
+    # wins at $1,000, and a 20% move in the spot level ($800 / $1,200)
+    # does not come close to flipping it. paths_n=41 keeps the p95
+    # interpolation on exact ranks for these constant-cost cases.
+    spot = [1.0] * 120
+    base = engine.plan(spot, 1000, 6, None, 2.0, 3.0, 4.0, paths_n=41)
+    assert base["recommendation"]["id"] == "spot"
+    sens = engine.price_sensitivity(spot, 1000, 6, None, 2.0, 3.0, 4.0,
+                                    paths_n=41)
+    assert sens["move"] == 0.20
+    assert sens["down"]["id"] == "spot"
+    assert sens["down"]["median"] == pytest.approx(800.0, rel=1e-9)
+    assert sens["up"]["id"] == "spot"
+    assert sens["up"]["median"] == pytest.approx(1200.0, rel=1e-9)
+
+
+def test_price_sensitivity_flips_on_a_knife_edge():
+    # Reserved at $2.00 against a constant spot level of $2.10: reserving
+    # wins today ($2,000, the sure thing at the cheapest bill). Drop the
+    # spot level 20% to $1.68 and all-spot wins at $1,680; raise it 20%
+    # and reserving still wins. The sensitivity must name the flip.
+    spot = [2.1] * 120
+    base = engine.plan(spot, 1000, 2, None, 2.0, 2.0, 10.0, paths_n=41)
+    assert base["recommendation"]["id"] == "reserved"
+    sens = engine.price_sensitivity(spot, 1000, 2, None, 2.0, 2.0, 10.0,
+                                    paths_n=41)
+    assert sens["down"]["id"] == "spot"
+    assert sens["down"]["median"] == pytest.approx(1680.0, rel=1e-9)
+    assert sens["up"]["id"] == "reserved"
+    assert sens["up"]["median"] == pytest.approx(2000.0, rel=1e-9)
+
+
+def test_spot_move_share_pins_the_shipped_series():
+    # The flip message states this share for the selected GPU, so pin
+    # it per GPU: 30-day windows starting every day over the shipped
+    # 214-day series (184 windows), |move| >= 20%. Shares are the
+    # whole-percent figures the page prints (Claude's counts from the
+    # 2026-11-18 review: H100 9%, A100 63%, V100 28%).
+    expected = {"h100": 9, "a100": 63, "v100": 28}
+    for key, pct in expected.items():
+        share = engine.spot_move_share(PRICES["gpus"][key]["spot"])
+        assert int(share * 100 + 0.5) == pct
+    # A flat series never moves; a series that doubles in 30 days
+    # moves in every window.
+    assert engine.spot_move_share([2.0] * 120) == 0.0
+    ramp = [1.0 + i for i in range(60)]
+    assert engine.spot_move_share(ramp) == 1.0

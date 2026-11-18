@@ -255,10 +255,47 @@
     };
   }
 
+  /* Does the recommendation survive a move in the spot price level?
+   * Re-runs plan() with the whole spot series scaled by (1 - move) and
+   * (1 + move): one constant factor leaves the log returns unchanged
+   * (the same trick as the level anchoring), while the reserved and
+   * on-demand prices and the cap stay where the user put them. Returns
+   * the winning plan and its median bill at each level. */
+  function priceSensitivity(spot, hours, weeks, budget, ckptHours, pRes, pOd, opts) {
+    opts = opts || {};
+    var move = opts.move != null ? opts.move : 0.20;
+    function winner(factor) {
+      var scaled = spot.map(function (p) { return p * factor; });
+      var out = plan(scaled, hours, weeks, budget, ckptHours, pRes, pOd, opts);
+      var w = out.strategies.filter(function (s) { return s.id === out.recommendation.id; })[0];
+      return { id: out.recommendation.id, cls: out.recommendation.cls, median: w.median };
+    }
+    return { move: move, down: winner(1 - move), up: winner(1 + move) };
+  }
+
+  /* Share of 30-day windows in this spot series that moved by at
+   * least `move` (up or down). Windows start on every day: window i
+   * compares spot[i] with spot[i + windowDays], so a 214-day series
+   * has 184 windows. The move is (end - start) / start. The verdict's
+   * flip message states this share for the selected GPU instead of
+   * claiming what a "normal month" looks like. */
+  function spotMoveShare(spot, windowDays, move) {
+    windowDays = windowDays == null ? 30 : windowDays;
+    move = move == null ? 0.20 : move;
+    var n = spot.length - windowDays;
+    if (n <= 0) return 0;
+    var big = 0;
+    for (var i = 0; i < n; i++) {
+      if (Math.abs((spot[i + windowDays] - spot[i]) / spot[i]) >= move) big++;
+    }
+    return big / n;
+  }
+
   var api = { STRATEGIES: STRATEGIES, mulberry32: mulberry32, logReturns: logReturns,
               startPrice: startPrice, samplePaths: samplePaths, iidPaths: iidPaths, runStrategy: runStrategy,
               poissonInv: poissonInv, reclaimUniforms: reclaimUniforms, reservedCost: reservedCost,
-              percentile: percentile, summarize: summarize, recommend: recommend, plan: plan };
+              percentile: percentile, summarize: summarize, recommend: recommend, plan: plan,
+              priceSensitivity: priceSensitivity, spotMoveShare: spotMoveShare };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   g.GpuPlan = api;
 })(typeof window !== "undefined" ? window : globalThis);

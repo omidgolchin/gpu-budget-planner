@@ -381,3 +381,46 @@ def plan(spot, hours, weeks, budget, ckpt_hours, p_res, p_od,
         "iid_spot_median": percentile(iid_costs, 0.50),
         "block_spot_median": stats["spot"]["median"],
     }
+
+
+def price_sensitivity(spot, hours, weeks, budget, ckpt_hours, p_res, p_od,
+                      cap=None, paths_n=400, seed=42, block=28, reclaim=0.0,
+                      gpn=8, term_hours=None, move=0.20):
+    """Does the recommendation survive a move in the spot price level?
+
+    Re-runs the full evaluation with the whole spot series scaled by
+    (1 - move) and by (1 + move). One constant factor leaves the log
+    returns — the dynamics every path is built from — unchanged, the
+    same trick as the level anchoring (DECISIONS #3); what changes is
+    where the spot level sits against the reserved and on-demand
+    prices and the cap, which are all held at the caller's values.
+    Returns the winning plan and its median bill at each level.
+    """
+    def winner(factor):
+        out = plan([p * factor for p in spot], hours, weeks, budget,
+                   ckpt_hours, p_res, p_od, cap=cap, paths_n=paths_n,
+                   seed=seed, block=block, reclaim=reclaim, gpn=gpn,
+                   term_hours=term_hours)
+        rec = out["recommendation"]
+        w = next(s for s in out["strategies"] if s["id"] == rec["id"])
+        return {"id": rec["id"], "cls": rec["cls"], "median": w["median"]}
+
+    return {"move": move, "down": winner(1.0 - move), "up": winner(1.0 + move)}
+
+
+def spot_move_share(spot, window_days=30, move=0.20):
+    """Share of 30-day windows in this spot series that moved by at
+    least `move` (up or down).
+
+    Windows start on every day: window i compares spot[i] with
+    spot[i + window_days], so a 214-day series has 184 windows. The
+    move is (end - start) / start. The verdict's flip message states
+    this share for the selected GPU instead of claiming what a
+    "normal month" looks like (DECISIONS, spot price move check).
+    """
+    n = len(spot) - window_days
+    if n <= 0:
+        return 0.0
+    big = sum(1 for i in range(n)
+              if abs((spot[i + window_days] - spot[i]) / spot[i]) >= move)
+    return big / n
