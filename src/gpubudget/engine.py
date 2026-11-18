@@ -249,13 +249,17 @@ def summarize(costs, missed_flags, budget):
     s = sorted(costs)
     p95 = percentile(s, 0.95)
     worst = [c for c in s if c >= p95]
+    # Degenerate case: when every cost is identical, the interpolated
+    # p95 can land 1 ulp above the maximum, leaving the worst set
+    # empty. The shortfall of a single repeated bill is that bill.
+    es95 = sum(worst) / len(worst) if worst else s[-1]
     out = {
         "median": percentile(s, 0.50),
         "p5": percentile(s, 0.05),
         "p25": percentile(s, 0.25),
         "p75": percentile(s, 0.75),
         "p95": p95,
-        "es95": sum(worst) / len(worst),   # Acerbi & Tasche (2002): mean of the worst 5%
+        "es95": es95,   # Acerbi & Tasche (2002): mean of the worst 5%
         "mean": sum(s) / len(s),
         "p_miss": sum(1 for m in missed_flags if m) / len(missed_flags),
     }

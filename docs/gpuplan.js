@@ -158,7 +158,12 @@
   function summarize(costs, missedFlags, budget) {
     var s = costs.slice().sort(function (a, b) { return a - b; });
     var p95 = percentile(s, 0.95), worst = s.filter(function (c) { return c >= p95; });
-    var es = 0; worst.forEach(function (c) { es += c; }); es /= worst.length;
+    /* Degenerate case: when every cost is identical, the interpolated
+     * p95 can land 1 ulp above the maximum, leaving the worst set
+     * empty. The shortfall of a single repeated bill is that bill. */
+    var es;
+    if (worst.length) { es = 0; worst.forEach(function (c) { es += c; }); es /= worst.length; }
+    else es = s[s.length - 1];
     var over = null;
     if (budget !== null && budget !== undefined) {
       over = s.filter(function (c) { return c > budget; }).length / s.length;

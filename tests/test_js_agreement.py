@@ -68,6 +68,31 @@ def test_rng_stream_is_bit_exact():
     assert out[0]["first5"] == py
 
 
+def test_degenerate_constant_series_agrees_and_stays_finite():
+    # The summarize() guard: a constant $0.80 series at paths_n=50
+    # makes every simulated bill identical, which used to empty the
+    # worst-5% set (ZeroDivisionError in Python, NaN in JS). Both
+    # engines must now report the repeated bill as the shortfall.
+    spot = [0.80] * 214
+    py = engine.plan(spot, 1000, 6, None, 2.0, 3.0, 4.0, paths_n=50)
+    runner = """
+const G = require(process.argv[1]);
+const out = G.plan(Array(214).fill(0.8), 1000, 6, null, 2.0, 3.0, 4.0,
+                   {paths: 50});
+console.log(JSON.stringify(out.strategies.map(s => ({
+  id: s.id, es95: s.es95, median: s.median }))));
+"""
+    proc = subprocess.run(
+        [NODE, "-e", runner, str(ROOT / "docs" / "gpuplan.js")],
+        capture_output=True, text=True, timeout=300, cwd=ROOT)
+    assert proc.returncode == 0, proc.stderr
+    js = {s["id"]: s for s in json.loads(proc.stdout)}
+    for st in py["strategies"]:
+        assert js[st["id"]]["es95"] == pytest.approx(st["es95"], rel=1e-9)
+        assert js[st["id"]]["es95"] == pytest.approx(js[st["id"]]["median"],
+                                                     rel=1e-9)
+
+
 def test_plan_agrees_on_four_cases():
     jobs = []
     for c in CASES:

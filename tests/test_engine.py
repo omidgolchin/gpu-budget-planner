@@ -268,3 +268,15 @@ def test_spot_move_share_pins_the_shipped_series():
     assert engine.spot_move_share([2.0] * 120) == 0.0
     ramp = [1.0 + i for i in range(60)]
     assert engine.spot_move_share(ramp) == 1.0
+
+
+def test_plan_survives_a_constant_spot_series_at_paths_50():
+    # Regression: with a constant $0.80 spot series and paths_n=50,
+    # every simulated bill for a strategy is the same number, and the
+    # interpolated p95 can land 1 ulp above it — the worst-5% set in
+    # summarize() came out empty and es95 divided by zero. The guard
+    # falls back to that repeated bill itself.
+    out = engine.plan([0.80] * 214, 1000, 6, None, 2.0, 3.0, 4.0,
+                      paths_n=50)
+    for st in out["strategies"]:
+        assert st["es95"] == pytest.approx(st["median"], rel=1e-9)

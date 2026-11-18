@@ -121,3 +121,12 @@ Revisions after review
   counts windows with |move| ≥ 20%. On the shipped series that is
   H100 9%, A100 63%, V100 28% (pinned in tests/test_engine.py and
   mirrored in both engines as spot_move_share / spotMoveShare).
+- **summarize() worst-set guard (2026-11-18, Claude review).** When a
+  strategy's simulated bills are all the same number — a constant
+  spot series is the clean case — the interpolated 95th percentile
+  can land 1 ulp above the maximum, leaving the worst-5% set empty:
+  Python divided by zero, the JS mirror produced NaN. Both engines
+  now fall back to the maximum bill, which is the shortfall of a
+  single repeated bill. Behaviour on non-degenerate inputs is
+  unchanged; a constant $0.80 series at paths_n=50 is pinned as a
+  regression test in both engines.
